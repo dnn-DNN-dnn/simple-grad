@@ -47,3 +47,28 @@ def test_autograd():
     np.testing.assert_allclose(z1.grad, pt_z1.grad.detach().numpy(),
                                rtol=1.3e-6, atol=1e-5)
 
+
+def test_backward_accumulates_leaf_gradients_without_repropagating_old_gradients():
+    """Repeated traversals add leaf grads but do not reuse stale intermediates."""
+    x = Tensor([1.0, -2.0, 3.0], requires_grad=True)
+    result = x * x
+    upstream = np.array([1.0, 2.0, 3.0], dtype=np.float32)
+
+    result.backward(upstream)
+    first_gradient = x.grad.copy()
+    result.backward(upstream)
+
+    np.testing.assert_allclose(first_gradient, 2 * x.data * upstream)
+    np.testing.assert_allclose(x.grad, 2 * first_gradient)
+
+
+def test_backward_accumulates_contributions_from_branches():
+    """Every path from a branched graph contributes to the shared leaf."""
+    x = Tensor([1.0, 2.0, 3.0], requires_grad=True)
+    squared = x * x
+    result = squared + x
+    upstream = np.array([3.0, 2.0, 1.0], dtype=np.float32)
+
+    result.backward(upstream)
+
+    np.testing.assert_allclose(x.grad, (2 * x.data + 1) * upstream)
