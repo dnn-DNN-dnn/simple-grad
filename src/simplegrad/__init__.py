@@ -1,7 +1,7 @@
 from .module import Conv2d, Flatten, Linear, Module, ReLU, Sequential
 from .ops import conv2d, cross_entropy, flatten, matmul, relu, reshape, sigmoid
 from .optim import Adam
-from .tensor import Tensor
+from .tensor import Tensor, release_graph
 
 __all__ = [
     "Adam",
@@ -18,5 +18,6 @@ __all__ = [
     "matmul",
     "relu",
     "reshape",
+    "release_graph",
     "sigmoid",
 ]

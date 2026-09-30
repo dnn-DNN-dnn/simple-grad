@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 import torch
 
-from simplegrad.tensor import Tensor, _accumulate_grad, sum_to_shape
+from simplegrad.tensor import Tensor, _accumulate_grad, release_graph, sum_to_shape
 
 
 def test_from_torch():
@@ -131,3 +131,19 @@ def test_sum_to_shape_rejects_incompatible_shape():
     """Reduction cannot repair dimensions that were not broadcast-compatible."""
     with pytest.raises(ValueError, match="cannot broadcast"):
         sum_to_shape(np.ones((2, 3), dtype=np.float32), (2, 4))
+
+
+def test_release_graph_removes_links_but_preserves_gradients():
+    """Explicit cleanup releases graph state after gradients are consumed."""
+    x = Tensor([1.0, 2.0], requires_grad=True)
+    intermediate = x * x
+    result = intermediate + x
+    result.backward()
+    expected_gradient = x.grad.copy()
+
+    release_graph(result)
+
+    assert result._prev == ()
+    assert intermediate._prev == ()
+    assert x._prev == ()
+    np.testing.assert_array_equal(x.grad, expected_gradient)

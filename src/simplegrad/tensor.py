@@ -2,6 +2,10 @@ import numpy as np
 import torch
 
 
+def _noop_backward():
+    """Shared no-op used by leaf and released Tensor nodes."""
+
+
 def sum_to_shape(gradient, shape):
     """Reduce a broadcasted gradient back to an input's original shape."""
     try:
@@ -88,7 +92,7 @@ class Tensor:
         self.data = np.array(data, dtype=np.float32)
         self.requires_grad = requires_grad
         self.grad = np.zeros_like(self.data) if requires_grad else None
-        self._backward = lambda: None
+        self._backward = _noop_backward
         self._prev = set()
 
     def __repr__(self):
@@ -222,3 +226,25 @@ class Tensor:
 
     def __rtruediv__(self, other): # other / self
         return other * self**-1
+
+
+def release_graph(root):
+    """Remove backward closures and parent links reachable from ``root``."""
+    if not isinstance(root, Tensor):
+        raise TypeError("release_graph root must be a Tensor")
+
+    nodes = []
+    visited = set()
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        node_id = id(node)
+        if node_id in visited:
+            continue
+        visited.add(node_id)
+        nodes.append(node)
+        stack.extend(node._prev)
+
+    for node in nodes:
+        node._prev = ()
+        node._backward = _noop_backward
