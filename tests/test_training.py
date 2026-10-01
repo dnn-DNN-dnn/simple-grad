@@ -74,3 +74,9 @@ def test_mnist_training_script_runs_offline_and_writes_metrics(tmp_path):
     breakdown = memory_estimate["breakdown"]
     assert memory_estimate["parameter_count"] > 0
     assert memory_estimate["peak_bytes"] == sum(breakdown.values())
+    memory_measurement = metrics["memory_measurement"]
+    assert memory_measurement["peak_bytes"] == sum(
+        memory_measurement["at_peak"].values()
+    )
+    assert memory_measurement["at_peak"]["parameters"] == breakdown["parameters"]
+    assert "measured memory:" in completed.stdout

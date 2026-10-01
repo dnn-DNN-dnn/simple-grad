@@ -1,4 +1,11 @@
 from .module import Conv2d, Flatten, Linear, Module, ReLU, Sequential
+from .memory import (
+    MemoryEvent,
+    MemoryStats,
+    get_memory_event_trace,
+    get_memory_stats,
+    reset_peak_memory,
+)
 from .memory_estimate import (
     MemoryBreakdown,
     MemoryEstimate,
@@ -18,6 +25,8 @@ __all__ = [
     "Linear",
     "MemoryBreakdown",
     "MemoryEstimate",
+    "MemoryEvent",
+    "MemoryStats",
     "Module",
     "ReLU",
     "Sequential",
@@ -29,9 +38,12 @@ __all__ = [
     "format_bytes",
     "format_memory_estimate",
     "format_parameter_count",
+    "get_memory_event_trace",
+    "get_memory_stats",
     "matmul",
     "relu",
     "reshape",
     "release_graph",
+    "reset_peak_memory",
     "sigmoid",
 ]

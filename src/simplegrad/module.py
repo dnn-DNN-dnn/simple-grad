@@ -47,8 +47,15 @@ class Linear(Module):
         self.weight = Tensor(
             np.random.randn(self.out_features, self.in_features) * 0.01,
             requires_grad=True,
+            _data_category="parameters",
+            _source="linear.weight",
         )
-        self.bias = Tensor(np.zeros(self.out_features), requires_grad=True)
+        self.bias = Tensor(
+            np.zeros(self.out_features),
+            requires_grad=True,
+            _data_category="parameters",
+            _source="linear.bias",
+        )
 
     def __call__(self, x):
         if not isinstance(x, Tensor):
@@ -124,9 +131,16 @@ class Conv2d(Module):
             )
             * 0.01,
             requires_grad=True,
+            _data_category="parameters",
+            _source="conv2d.weight",
         )
         self.bias = (
-            Tensor(np.zeros(self.out_channels), requires_grad=True)
+            Tensor(
+                np.zeros(self.out_channels),
+                requires_grad=True,
+                _data_category="parameters",
+                _source="conv2d.bias",
+            )
             if bias
             else None
         )

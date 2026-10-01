@@ -21,7 +21,9 @@ from simplegrad import (
     cross_entropy,
     estimate_peak_memory,
     format_memory_estimate,
+    get_memory_stats,
     release_graph,
+    reset_peak_memory,
 )
 
 
@@ -161,6 +163,7 @@ def main():
     )
     optimizer = Adam(model.parameters(), lr=args.learning_rate)
     rng = np.random.default_rng(args.seed + 1)
+    reset_peak_memory()
 
     metrics = {
         "config": vars(args).copy(),
@@ -220,7 +223,20 @@ def main():
     metrics["final_accuracy"] = metrics["epochs"][-1]["test_accuracy"]
     metrics["total_training_seconds"] = total_training_seconds
     metrics["total_process_seconds"] = perf_counter() - process_started
+    measured_memory = get_memory_stats()
+    metrics["memory_measurement"] = measured_memory.to_dict()
     destination = write_metrics(args.output_dir, metrics)
+    print(
+        "measured memory: "
+        f"peak={measured_memory.peak_bytes:,} bytes "
+        f"parameters={measured_memory.at_peak.parameters:,} "
+        f"gradients={measured_memory.at_peak.gradients:,} "
+        f"optimizer_state={measured_memory.at_peak.optimizer_state:,} "
+        "saved_activations="
+        f"{measured_memory.at_peak.activations_saved_for_backward:,} "
+        f"transient_other={measured_memory.at_peak.transient_other:,}",
+        flush=True,
+    )
     print(
         f"total_train_time={metrics['total_training_seconds']:.3f}s "
         f"total_process_time={metrics['total_process_seconds']:.3f}s"

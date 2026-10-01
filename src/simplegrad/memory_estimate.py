@@ -15,6 +15,7 @@ from numbers import Integral
 import numpy as np
 
 from .module import Conv2d, Flatten, Linear, Module, ReLU, Sequential
+from .memory import MemoryBreakdown
 from .tensor import Tensor
 
 
@@ -82,54 +83,6 @@ def format_memory_estimate(estimate):
         f"num params: {format_parameter_count(estimate.parameter_count)}, "
         f"memory: {format_bytes(estimate.peak_bytes)}"
     )
-
-
-@dataclass(frozen=True)
-class MemoryBreakdown:
-    """Estimated bytes by required Task 2 category."""
-
-    parameters: int = 0
-    gradients: int = 0
-    optimizer_state: int = 0
-    activations_saved_for_backward: int = 0
-    transient_other: int = 0
-
-    def __post_init__(self):
-        for name in (
-            "parameters",
-            "gradients",
-            "optimizer_state",
-            "activations_saved_for_backward",
-            "transient_other",
-        ):
-            object.__setattr__(
-                self,
-                name,
-                _non_negative_integer(getattr(self, name), name),
-            )
-
-    @property
-    def total_bytes(self):
-        return (
-            self.parameters
-            + self.gradients
-            + self.optimizer_state
-            + self.activations_saved_for_backward
-            + self.transient_other
-        )
-
-    @property
-    def total(self):
-        return self.total_bytes
-
-    def to_dict(self):
-        return {
-            "parameters": self.parameters,
-            "gradients": self.gradients,
-            "optimizer_state": self.optimizer_state,
-            "activations_saved_for_backward": self.activations_saved_for_backward,
-            "transient_other": self.transient_other,
-        }
 
 
 @dataclass(frozen=True)
