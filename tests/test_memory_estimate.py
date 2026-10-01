@@ -77,7 +77,7 @@ def test_human_readable_formatters_preserve_exact_values():
 
     estimate = estimate_peak_memory(build_tiny_model(), 4, (1, 5, 5))
     assert format_memory_estimate(estimate) == (
-        "num params: 0.0001M (77), memory: 2.6 KB (2,592 bytes)"
+        "num params: 0.0001M (77), memory: 3.7 KB (3,736 bytes)"
     )
 
     with pytest.raises(ValueError, match="non-negative"):
@@ -101,8 +101,10 @@ def test_tiny_model_matches_hand_calculation():
     # input=100, Conv=72, ReLU=72, Flatten=72, Linear=12,
     # cross-entropy probabilities=12.
     assert estimate.activations_saved_for_backward == 340 * 4
-    assert estimate.transient_other == 0
-    assert estimate.peak_bytes == 2592
+    # Adam dominates the simple transient model: five arrays for the largest
+    # parameter (54 float32 elements), plus two retained int64 batch vectors.
+    assert estimate.transient_other == 5 * 54 * 4 + 4 * 2 * 8
+    assert estimate.peak_bytes == 3736
 
 
 def test_estimator_does_not_execute_supported_modules(monkeypatch):
@@ -125,7 +127,7 @@ def test_estimate_is_repeatable():
     )
 
 
-def test_batch_size_only_changes_saved_activations():
+def test_batch_size_changes_activations_and_may_change_transient_workspace():
     model = build_mnist_model(depth=2, width=8)
     small = estimate_peak_memory(model, 8, (1, 28, 28))
     large = estimate_peak_memory(model, 16, (1, 28, 28))
@@ -139,7 +141,18 @@ def test_batch_size_only_changes_saved_activations():
     )
     assert large.peak_bytes - small.peak_bytes == (
         small.activations_saved_for_backward
+        + large.transient_other
+        - small.transient_other
     )
+
+
+def test_transient_workspace_is_nonzero_and_scales_for_large_batches():
+    model = build_mnist_model(depth=2, width=8)
+    small = estimate_peak_memory(model, 1, (1, 28, 28))
+    large = estimate_peak_memory(model, 128, (1, 28, 28))
+
+    assert small.transient_other > 0
+    assert large.transient_other > small.transient_other
 
 
 def test_depth_and_width_change_prediction():

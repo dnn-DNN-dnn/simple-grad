@@ -100,7 +100,7 @@ def generate_predictions(repo_root):
             "gradients": "one buffer per trainable parameter",
             "loss": "cross_entropy",
             "optimizer": "two Adam moments per trainable parameter",
-            "peak": "parameters + gradients + optimizer state + saved activations",
+            "peak": "persistent state + saved activations + largest modeled transient workspace",
         },
         "assumptions": assumptions,
         "configurations": configurations,

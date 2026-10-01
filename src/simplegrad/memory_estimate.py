@@ -3,6 +3,7 @@
 The estimator intentionally uses a compact analytical model:
 
     parameters + parameter gradients + Adam state + saved activations
+    + largest modeled transient workspace
 
 It does not execute the model or inspect runtime allocations.
 """
@@ -25,7 +26,8 @@ _ASSUMPTIONS = (
     "two Adam moment buffers per trainable parameter",
     "saved activations include the input, each leaf module output, and loss probabilities",
     "intermediate Tensor gradient buffers are excluded",
-    "short-lived operation and optimizer temporaries are excluded",
+    "transient/other includes retained target indices plus the largest modeled workspace",
+    "opaque NumPy, BLAS, and einsum internal workspace is excluded",
 )
 
 
@@ -217,8 +219,9 @@ def _numel(shape):
     return int(prod(shape))
 
 
-def _trainable_parameter_count(model):
+def _trainable_parameter_stats(model):
     count = 0
+    largest = 0
     seen = set()
     for parameter in model.parameters():
         if not isinstance(parameter, Tensor):
@@ -231,10 +234,12 @@ def _trainable_parameter_count(model):
             continue
         if parameter.data.dtype != np.float32:
             raise ValueError("the estimator supports only float32 parameters")
-        count += _numel(parameter.data.shape)
+        parameter_count = _numel(parameter.data.shape)
+        count += parameter_count
+        largest = max(largest, parameter_count)
     if count == 0:
         raise ValueError("estimate_peak_memory requires trainable parameters")
-    return count
+    return count, largest
 
 
 def _flatten_shape(shape, start_dim, path):
@@ -249,21 +254,25 @@ def _flatten_shape(shape, start_dim, path):
     return shape[:normalized] + (_numel(shape[normalized:]),)
 
 
-def _analyze_module(module, input_shape, path):
-    """Return ``(output_shape, saved_output_elements)`` without execution."""
+def _analyze_module(module, input_shape, input_requires_grad, path):
+    """Return output shape, saved elements, workspace bytes, and grad flag."""
     if isinstance(module, Sequential):
         if not module.modules:
             raise ValueError(f"{path} Sequential must contain at least one module")
         shape = input_shape
         saved_elements = 0
+        largest_workspace = 0
+        requires_grad = input_requires_grad
         for index, child in enumerate(module.modules):
-            shape, child_saved = _analyze_module(
+            shape, child_saved, child_workspace, requires_grad = _analyze_module(
                 child,
                 shape,
+                requires_grad,
                 f"{path}.{index}",
             )
             saved_elements += child_saved
-        return shape, saved_elements
+            largest_workspace = max(largest_workspace, child_workspace)
+        return shape, saved_elements, largest_workspace, requires_grad
 
     if isinstance(module, Conv2d):
         if len(input_shape) != 4:
@@ -289,14 +298,59 @@ def _analyze_module(module, input_shape, path):
             output_side,
             output_side,
         )
-        return output_shape, _numel(output_shape)
+        weight_shape = (
+            module.out_channels,
+            module.in_channels,
+            module.kernel_size,
+            module.kernel_size,
+        )
+        weight_bytes = _numel(weight_shape) * _FLOAT32_BYTES
+        input_gradient_bytes = (
+            _numel(input_shape) * _FLOAT32_BYTES
+            if input_requires_grad
+            else 0
+        )
+        input_einsum_bytes = (
+            input_shape[0]
+            * module.in_channels
+            * module.kernel_size
+            * module.kernel_size
+            * _FLOAT32_BYTES
+            if input_requires_grad
+            else 0
+        )
+        bias_reduction_bytes = (
+            module.out_channels * _FLOAT32_BYTES
+            if module.bias is not None
+            else 0
+        )
+        backward_workspace = (
+            input_gradient_bytes
+            + weight_bytes
+            + max(
+                input_einsum_bytes,
+                weight_bytes,
+                bias_reduction_bytes,
+            )
+        )
+        forward_workspace = _numel(output_shape) * _FLOAT32_BYTES
+        return (
+            output_shape,
+            _numel(output_shape),
+            max(forward_workspace, backward_workspace),
+            True,
+        )
 
     if isinstance(module, ReLU):
-        return input_shape, _numel(input_shape)
+        # Backward simultaneously creates a bool mask and float32 product.
+        workspace = _numel(input_shape) * (
+            np.dtype(np.bool_).itemsize + _FLOAT32_BYTES
+        )
+        return input_shape, _numel(input_shape), workspace, input_requires_grad
 
     if isinstance(module, Flatten):
         output_shape = _flatten_shape(input_shape, module.start_dim, path)
-        return output_shape, _numel(output_shape)
+        return output_shape, _numel(output_shape), 0, input_requires_grad
 
     if isinstance(module, Linear):
         if len(input_shape) != 2 or input_shape[1] != module.in_features:
@@ -305,7 +359,18 @@ def _analyze_module(module, input_shape, path):
                 f"shape propagation produced {input_shape}"
             )
         output_shape = (input_shape[0], module.out_features)
-        return output_shape, _numel(output_shape)
+        forward_workspace = _numel(output_shape) * _FLOAT32_BYTES
+        input_contribution = _numel(input_shape) * _FLOAT32_BYTES
+        weight_contribution = (
+            module.in_features * module.out_features * _FLOAT32_BYTES
+        )
+        backward_workspace = max(input_contribution, weight_contribution)
+        return (
+            output_shape,
+            _numel(output_shape),
+            max(forward_workspace, backward_workspace),
+            True,
+        )
 
     raise TypeError(
         f"estimate_peak_memory does not support module {type(module).__name__}"
@@ -335,13 +400,19 @@ def estimate_peak_memory(model, batch_size, input_shape):
         batch_size,
         input_shape,
     )
-    parameter_count = _trainable_parameter_count(model)
+    parameter_count, largest_parameter_count = _trainable_parameter_stats(model)
     parameter_bytes = parameter_count * _FLOAT32_BYTES
 
     full_input_shape = (batch_size,) + input_shape
-    output_shape, module_activation_count = _analyze_module(
+    (
+        output_shape,
+        module_activation_count,
+        module_workspace_bytes,
+        _,
+    ) = _analyze_module(
         model,
         full_input_shape,
+        False,
         "model",
     )
     if len(output_shape) != 2:
@@ -358,6 +429,24 @@ def estimate_peak_memory(model, batch_size, input_shape):
         + module_activation_count
         + _numel(output_shape)
     )
+    batch_size, _ = output_shape
+    retained_target_and_index_bytes = batch_size * 2 * np.dtype(np.int64).itemsize
+    logits_bytes = _numel(output_shape) * _FLOAT32_BYTES
+    # Shifted logits and exponentials coexist. Four batch-sized float32 arrays
+    # cover normalizers, log-normalizers, indexed logits, and per-example loss.
+    loss_workspace_bytes = (
+        2 * logits_bytes
+        + 4 * batch_size * _FLOAT32_BYTES
+        + _FLOAT32_BYTES
+    )
+    # Adam's corrected moments, denominator, numerator, and update can overlap.
+    adam_workspace_bytes = 5 * largest_parameter_count * _FLOAT32_BYTES
+    transient_other_bytes = retained_target_and_index_bytes + max(
+        module_workspace_bytes,
+        loss_workspace_bytes,
+        adam_workspace_bytes,
+        _FLOAT32_BYTES,
+    )
     breakdown = MemoryBreakdown(
         parameters=parameter_bytes,
         gradients=parameter_bytes,
@@ -365,7 +454,7 @@ def estimate_peak_memory(model, batch_size, input_shape):
         activations_saved_for_backward=(
             saved_activation_count * _FLOAT32_BYTES
         ),
-        transient_other=0,
+        transient_other=transient_other_bytes,
     )
     return MemoryEstimate(
         parameter_count=parameter_count,
