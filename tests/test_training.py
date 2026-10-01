@@ -55,6 +55,10 @@ def test_mnist_training_script_runs_offline_and_writes_metrics(tmp_path):
     )
 
     metrics = json.loads((output_dir / "metrics.json").read_text())
+    assert "num params:" in completed.stdout
+    assert "memory:" in completed.stdout
+    assert "memory breakdown:" in completed.stdout
+    assert "saved_activations_bytes=" in completed.stdout
     assert "epoch=1/1" in completed.stdout
     assert "train_time=" in completed.stdout
     assert "total_train_time=" in completed.stdout
@@ -66,3 +70,7 @@ def test_mnist_training_script_runs_offline_and_writes_metrics(tmp_path):
     assert metrics["total_training_seconds"] >= 0
     assert metrics["total_process_seconds"] >= metrics["total_training_seconds"]
     assert 0 <= metrics["final_accuracy"] <= 1
+    memory_estimate = metrics["memory_estimate"]
+    breakdown = memory_estimate["breakdown"]
+    assert memory_estimate["parameter_count"] > 0
+    assert memory_estimate["peak_bytes"] == sum(breakdown.values())

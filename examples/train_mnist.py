@@ -19,6 +19,8 @@ from simplegrad import (
     Sequential,
     Tensor,
     cross_entropy,
+    estimate_peak_memory,
+    format_memory_estimate,
     release_graph,
 )
 
@@ -141,10 +143,30 @@ def main():
 
     np.random.seed(args.seed)
     model = build_model(args.depth, args.width)
+    memory_estimate = estimate_peak_memory(
+        model,
+        args.batch_size,
+        tuple(train_images.shape[1:]),
+    )
+    print(format_memory_estimate(memory_estimate), flush=True)
+    print(
+        "memory breakdown: "
+        f"parameters_bytes={memory_estimate.parameters} "
+        f"gradients_bytes={memory_estimate.gradients} "
+        f"optimizer_state_bytes={memory_estimate.optimizer_state} "
+        "saved_activations_bytes="
+        f"{memory_estimate.activations_saved_for_backward} "
+        f"transient_other_bytes={memory_estimate.transient_other}",
+        flush=True,
+    )
     optimizer = Adam(model.parameters(), lr=args.learning_rate)
     rng = np.random.default_rng(args.seed + 1)
 
-    metrics = {"config": vars(args).copy(), "epochs": []}
+    metrics = {
+        "config": vars(args).copy(),
+        "memory_estimate": memory_estimate.to_dict(),
+        "epochs": [],
+    }
     metrics["config"]["data_dir"] = str(args.data_dir)
     metrics["config"]["output_dir"] = str(args.output_dir)
 

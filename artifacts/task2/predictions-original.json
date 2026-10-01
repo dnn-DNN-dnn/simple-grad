@@ -1,0 +1,210 @@
+{
+  "schema_version": 1,
+  "artifact_kind": "analytical_prediction_only",
+  "allocation_policy_base_commit": "322b4ea4bed34aa6c9bfa13504e3a3851dfe4777",
+  "estimator_version": 1,
+  "input_shape": [
+    1,
+    28,
+    28
+  ],
+  "policy": {
+    "dtype": "float32",
+    "gradients": "one buffer per trainable parameter",
+    "loss": "cross_entropy",
+    "optimizer": "two Adam moments per trainable parameter",
+    "peak": "parameters + gradients + optimizer state + saved activations"
+  },
+  "assumptions": [
+    "float32 parameter, gradient, optimizer-state, and activation arrays",
+    "one gradient buffer per trainable parameter",
+    "two Adam moment buffers per trainable parameter",
+    "saved activations include the input, each leaf module output, and loss probabilities",
+    "intermediate Tensor gradient buffers are excluded",
+    "short-lived operation and optimizer temporaries are excluded"
+  ],
+  "configurations": [
+    {
+      "label": "depth-1",
+      "depth": 1,
+      "width": 8,
+      "batch_size": 16,
+      "parameter_count": 54170,
+      "peak_bytes": 1956512,
+      "breakdown": {
+        "parameters": 216680,
+        "gradients": 216680,
+        "optimizer_state": 433360,
+        "activations_saved_for_backward": 1089792,
+        "transient_other": 0
+      },
+      "display": {
+        "num_params": "0.05M (54,170)",
+        "memory": "2 MB (1,956,512 bytes)",
+        "breakdown": {
+          "parameters": "216.7 KB (216,680 bytes)",
+          "gradients": "216.7 KB (216,680 bytes)",
+          "optimizer_state": "433.4 KB (433,360 bytes)",
+          "activations_saved_for_backward": "1.1 MB (1,089,792 bytes)",
+          "transient_other": "0 B (0 bytes)"
+        }
+      }
+    },
+    {
+      "label": "baseline",
+      "depth": 2,
+      "width": 8,
+      "batch_size": 16,
+      "parameter_count": 46754,
+      "peak_bytes": 2376480,
+      "breakdown": {
+        "parameters": 187016,
+        "gradients": 187016,
+        "optimizer_state": 374032,
+        "activations_saved_for_backward": 1628416,
+        "transient_other": 0
+      },
+      "display": {
+        "num_params": "0.05M (46,754)",
+        "memory": "2.4 MB (2,376,480 bytes)",
+        "breakdown": {
+          "parameters": "187 KB (187,016 bytes)",
+          "gradients": "187 KB (187,016 bytes)",
+          "optimizer_state": "374 KB (374,032 bytes)",
+          "activations_saved_for_backward": "1.6 MB (1,628,416 bytes)",
+          "transient_other": "0 B (0 bytes)"
+        }
+      }
+    },
+    {
+      "label": "depth-3",
+      "depth": 3,
+      "width": 8,
+      "batch_size": 16,
+      "parameter_count": 39978,
+      "peak_bytes": 2716576,
+      "breakdown": {
+        "parameters": 159912,
+        "gradients": 159912,
+        "optimizer_state": 319824,
+        "activations_saved_for_backward": 2076928,
+        "transient_other": 0
+      },
+      "display": {
+        "num_params": "0.04M (39,978)",
+        "memory": "2.7 MB (2,716,576 bytes)",
+        "breakdown": {
+          "parameters": "159.9 KB (159,912 bytes)",
+          "gradients": "159.9 KB (159,912 bytes)",
+          "optimizer_state": "319.8 KB (319,824 bytes)",
+          "activations_saved_for_backward": "2.1 MB (2,076,928 bytes)",
+          "transient_other": "0 B (0 bytes)"
+        }
+      }
+    },
+    {
+      "label": "width-4",
+      "depth": 2,
+      "width": 4,
+      "batch_size": 16,
+      "parameter_count": 23238,
+      "peak_bytes": 1211744,
+      "breakdown": {
+        "parameters": 92952,
+        "gradients": 92952,
+        "optimizer_state": 185904,
+        "activations_saved_for_backward": 839936,
+        "transient_other": 0
+      },
+      "display": {
+        "num_params": "0.02M (23,238)",
+        "memory": "1.2 MB (1,211,744 bytes)",
+        "breakdown": {
+          "parameters": "93 KB (92,952 bytes)",
+          "gradients": "93 KB (92,952 bytes)",
+          "optimizer_state": "185.9 KB (185,904 bytes)",
+          "activations_saved_for_backward": "839.9 KB (839,936 bytes)",
+          "transient_other": "0 B (0 bytes)"
+        }
+      }
+    },
+    {
+      "label": "width-16",
+      "depth": 2,
+      "width": 16,
+      "batch_size": 16,
+      "parameter_count": 94650,
+      "peak_bytes": 4719776,
+      "breakdown": {
+        "parameters": 378600,
+        "gradients": 378600,
+        "optimizer_state": 757200,
+        "activations_saved_for_backward": 3205376,
+        "transient_other": 0
+      },
+      "display": {
+        "num_params": "0.09M (94,650)",
+        "memory": "4.7 MB (4,719,776 bytes)",
+        "breakdown": {
+          "parameters": "378.6 KB (378,600 bytes)",
+          "gradients": "378.6 KB (378,600 bytes)",
+          "optimizer_state": "757.2 KB (757,200 bytes)",
+          "activations_saved_for_backward": "3.2 MB (3,205,376 bytes)",
+          "transient_other": "0 B (0 bytes)"
+        }
+      }
+    },
+    {
+      "label": "batch-8",
+      "depth": 2,
+      "width": 8,
+      "batch_size": 8,
+      "parameter_count": 46754,
+      "peak_bytes": 1562272,
+      "breakdown": {
+        "parameters": 187016,
+        "gradients": 187016,
+        "optimizer_state": 374032,
+        "activations_saved_for_backward": 814208,
+        "transient_other": 0
+      },
+      "display": {
+        "num_params": "0.05M (46,754)",
+        "memory": "1.6 MB (1,562,272 bytes)",
+        "breakdown": {
+          "parameters": "187 KB (187,016 bytes)",
+          "gradients": "187 KB (187,016 bytes)",
+          "optimizer_state": "374 KB (374,032 bytes)",
+          "activations_saved_for_backward": "814.2 KB (814,208 bytes)",
+          "transient_other": "0 B (0 bytes)"
+        }
+      }
+    },
+    {
+      "label": "batch-32",
+      "depth": 2,
+      "width": 8,
+      "batch_size": 32,
+      "parameter_count": 46754,
+      "peak_bytes": 4004896,
+      "breakdown": {
+        "parameters": 187016,
+        "gradients": 187016,
+        "optimizer_state": 374032,
+        "activations_saved_for_backward": 3256832,
+        "transient_other": 0
+      },
+      "display": {
+        "num_params": "0.05M (46,754)",
+        "memory": "4 MB (4,004,896 bytes)",
+        "breakdown": {
+          "parameters": "187 KB (187,016 bytes)",
+          "gradients": "187 KB (187,016 bytes)",
+          "optimizer_state": "374 KB (374,032 bytes)",
+          "activations_saved_for_backward": "3.3 MB (3,256,832 bytes)",
+          "transient_other": "0 B (0 bytes)"
+        }
+      }
+    }
+  ]
+}
