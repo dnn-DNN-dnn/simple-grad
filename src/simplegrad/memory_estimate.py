@@ -23,11 +23,11 @@ _FLOAT32_BYTES = np.dtype(np.float32).itemsize
 _BYTE_UNITS = ("B", "KB", "MB", "GB", "TB", "PB", "EB")
 _ASSUMPTIONS = (
     "float32 parameter, gradient, optimizer-state, and activation arrays",
-    "one gradient buffer per trainable parameter",
+    "eager gradient buffers for parameters and every differentiable Tensor output",
     "two Adam moment buffers per trainable parameter",
-    "saved activations include the input, each leaf module output, and loss probabilities",
-    "intermediate Tensor gradient buffers are excluded",
-    "transient/other includes retained target indices plus the largest modeled workspace",
+    "saved activations include all retained Tensor data and loss probabilities",
+    "steady-state step after Adam moment buffers have been initialized",
+    "transient/other is the largest loss-forward, backward, or Adam workspace",
     "opaque NumPy, BLAS, and einsum internal workspace is excluded",
 )
 
@@ -208,24 +208,33 @@ def _flatten_shape(shape, start_dim, path):
 
 
 def _analyze_module(module, input_shape, input_requires_grad, path):
-    """Return output shape, saved elements, workspace bytes, and grad flag."""
+    """Return shape, retained data/grad elements, workspace, and grad flag."""
     if isinstance(module, Sequential):
         if not module.modules:
             raise ValueError(f"{path} Sequential must contain at least one module")
         shape = input_shape
-        saved_elements = 0
+        data_elements = 0
+        gradient_elements = 0
         largest_workspace = 0
         requires_grad = input_requires_grad
         for index, child in enumerate(module.modules):
-            shape, child_saved, child_workspace, requires_grad = _analyze_module(
-                child,
+            (
                 shape,
+                child_data,
+                child_gradients,
+                child_workspace,
                 requires_grad,
-                f"{path}.{index}",
-            )
-            saved_elements += child_saved
+            ) = _analyze_module(child, shape, requires_grad, f"{path}.{index}")
+            data_elements += child_data
+            gradient_elements += child_gradients
             largest_workspace = max(largest_workspace, child_workspace)
-        return shape, saved_elements, largest_workspace, requires_grad
+        return (
+            shape,
+            data_elements,
+            gradient_elements,
+            largest_workspace,
+            requires_grad,
+        )
 
     if isinstance(module, Conv2d):
         if len(input_shape) != 4:
@@ -290,20 +299,33 @@ def _analyze_module(module, input_shape, input_requires_grad, path):
         return (
             output_shape,
             _numel(output_shape),
+            _numel(output_shape),
             max(forward_workspace, backward_workspace),
             True,
         )
 
     if isinstance(module, ReLU):
-        # Backward simultaneously creates a bool mask and float32 product.
-        workspace = _numel(input_shape) * (
-            np.dtype(np.bool_).itemsize + _FLOAT32_BYTES
+        # Accounting registers the combined NumPy expression's float32 result.
+        workspace = _numel(input_shape) * _FLOAT32_BYTES
+        gradient_elements = _numel(input_shape) if input_requires_grad else 0
+        return (
+            input_shape,
+            _numel(input_shape),
+            gradient_elements,
+            workspace,
+            input_requires_grad,
         )
-        return input_shape, _numel(input_shape), workspace, input_requires_grad
 
     if isinstance(module, Flatten):
         output_shape = _flatten_shape(input_shape, module.start_dim, path)
-        return output_shape, _numel(output_shape), 0, input_requires_grad
+        gradient_elements = _numel(output_shape) if input_requires_grad else 0
+        return (
+            output_shape,
+            _numel(output_shape),
+            gradient_elements,
+            0,
+            input_requires_grad,
+        )
 
     if isinstance(module, Linear):
         if len(input_shape) != 2 or input_shape[1] != module.in_features:
@@ -312,15 +334,24 @@ def _analyze_module(module, input_shape, input_requires_grad, path):
                 f"shape propagation produced {input_shape}"
             )
         output_shape = (input_shape[0], module.out_features)
+        weight_elements = module.in_features * module.out_features
+        output_elements = _numel(output_shape)
+        # Linear expands to transpose(weight), matmul(input, weight.T), and
+        # add(matmul_output, bias). Each operation constructs an owned Tensor.
+        internal_tensor_elements = weight_elements + 2 * output_elements
         forward_workspace = _numel(output_shape) * _FLOAT32_BYTES
         input_contribution = _numel(input_shape) * _FLOAT32_BYTES
-        weight_contribution = (
-            module.in_features * module.out_features * _FLOAT32_BYTES
+        weight_contribution = weight_elements * _FLOAT32_BYTES
+        bias_contribution = module.out_features * _FLOAT32_BYTES
+        backward_workspace = max(
+            input_contribution,
+            weight_contribution,
+            bias_contribution,
         )
-        backward_workspace = max(input_contribution, weight_contribution)
         return (
             output_shape,
-            _numel(output_shape),
+            internal_tensor_elements,
+            internal_tensor_elements,
             max(forward_workspace, backward_workspace),
             True,
         )
@@ -343,7 +374,7 @@ def _validate_arguments(model, batch_size, input_shape):
 
 
 def estimate_peak_memory(model, batch_size, input_shape):
-    """Estimate peak bytes by summing persistent state and saved activations.
+    """Estimate a steady-state training step from exact allocation shapes.
 
     The function is analytical: it reads module and parameter metadata, performs
     shape propagation, and never calls the model or allocates dummy Tensors.
@@ -359,7 +390,8 @@ def estimate_peak_memory(model, batch_size, input_shape):
     full_input_shape = (batch_size,) + input_shape
     (
         output_shape,
-        module_activation_count,
+        module_data_count,
+        module_gradient_count,
         module_workspace_bytes,
         _,
     ) = _analyze_module(
@@ -374,35 +406,51 @@ def estimate_peak_memory(model, batch_size, input_shape):
             f"shape propagation produced {output_shape}"
         )
 
-    # The input is retained by the first operation. Each leaf module output is
-    # retained by the graph, and fused cross-entropy retains probabilities with
-    # the same shape as the logits.
+    # The input and every owned operation result remain reachable until graph
+    # release. Cross-entropy adds saved probabilities and its scalar Tensor.
     saved_activation_count = (
         _numel(full_input_shape)
-        + module_activation_count
+        + module_data_count
         + _numel(output_shape)
+        + 1
     )
+    intermediate_gradient_count = module_gradient_count + 1
     batch_size, _ = output_shape
-    retained_target_and_index_bytes = batch_size * 2 * np.dtype(np.int64).itemsize
+    retained_target_and_index_bytes = (
+        batch_size * 2 * np.dtype(np.int64).itemsize
+    )
     logits_bytes = _numel(output_shape) * _FLOAT32_BYTES
-    # Shifted logits and exponentials coexist. Four batch-sized float32 arrays
-    # cover normalizers, log-normalizers, indexed logits, and per-example loss.
-    loss_workspace_bytes = (
+    # At the loss-forward peak, targets, row maxima, shifted logits,
+    # exponentials, normalizers, log-normalizers, indices, per-example losses,
+    # and the temporary scalar coexist. Probabilities are saved activations.
+    loss_forward_transient_bytes = (
         2 * logits_bytes
         + 4 * batch_size * _FLOAT32_BYTES
+        + retained_target_and_index_bytes
         + _FLOAT32_BYTES
     )
+    # The implicit scalar upstream gradient coexists with each backward
+    # workspace and with the retained target/index vectors.
+    backward_transient_bytes = (
+        retained_target_and_index_bytes
+        + _FLOAT32_BYTES
+        + max(module_workspace_bytes, logits_bytes, _FLOAT32_BYTES)
+    )
     # Adam's corrected moments, denominator, numerator, and update can overlap.
-    adam_workspace_bytes = 5 * largest_parameter_count * _FLOAT32_BYTES
-    transient_other_bytes = retained_target_and_index_bytes + max(
-        module_workspace_bytes,
-        loss_workspace_bytes,
-        adam_workspace_bytes,
-        _FLOAT32_BYTES,
+    adam_transient_bytes = (
+        retained_target_and_index_bytes
+        + 5 * largest_parameter_count * _FLOAT32_BYTES
+    )
+    transient_other_bytes = max(
+        loss_forward_transient_bytes,
+        backward_transient_bytes,
+        adam_transient_bytes,
     )
     breakdown = MemoryBreakdown(
         parameters=parameter_bytes,
-        gradients=parameter_bytes,
+        gradients=(
+            parameter_bytes + intermediate_gradient_count * _FLOAT32_BYTES
+        ),
         optimizer_state=2 * parameter_bytes,
         activations_saved_for_backward=(
             saved_activation_count * _FLOAT32_BYTES
@@ -415,3 +463,30 @@ def estimate_peak_memory(model, batch_size, input_shape):
         breakdown=breakdown,
         assumptions=_ASSUMPTIONS,
     )
+
+
+def estimate_largest_batch_size(model, input_shape, memory_limit):
+    """Return the largest positive batch whose analytical peak fits a cap.
+
+    Return zero when even batch size one does not fit. The search remains pure:
+    it repeatedly performs shape analysis and never executes the model.
+    """
+    memory_limit = _non_negative_integer(memory_limit, "memory_limit")
+    input_shape = _shape_tuple(input_shape, "input_shape", expected_rank=3)
+
+    if estimate_peak_memory(model, 1, input_shape).peak_bytes > memory_limit:
+        return 0
+
+    lower = 1
+    upper = 2
+    while estimate_peak_memory(model, upper, input_shape).peak_bytes <= memory_limit:
+        lower = upper
+        upper *= 2
+
+    while lower + 1 < upper:
+        middle = (lower + upper) // 2
+        if estimate_peak_memory(model, middle, input_shape).peak_bytes <= memory_limit:
+            lower = middle
+        else:
+            upper = middle
+    return lower

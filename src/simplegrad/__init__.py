@@ -12,6 +12,7 @@ from .memory import (
 from .memory_estimate import (
     MemoryBreakdown,
     MemoryEstimate,
+    estimate_largest_batch_size,
     estimate_peak_memory,
     format_bytes,
     format_memory_estimate,
@@ -37,6 +38,7 @@ __all__ = [
     "Tensor",
     "conv2d",
     "cross_entropy",
+    "estimate_largest_batch_size",
     "estimate_peak_memory",
     "flatten",
     "format_bytes",

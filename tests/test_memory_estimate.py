@@ -1,6 +1,10 @@
+import gc
+
+import numpy as np
 import pytest
 
 from simplegrad import (
+    Adam,
     Conv2d,
     Flatten,
     Linear,
@@ -8,13 +12,18 @@ from simplegrad import (
     MemoryEstimate,
     ReLU,
     Sequential,
+    Tensor,
+    cross_entropy,
+    estimate_largest_batch_size,
     estimate_peak_memory,
     format_bytes,
     format_memory_estimate,
     format_parameter_count,
+    get_memory_stats,
+    release_graph,
+    reset_peak_memory,
 )
 from simplegrad.module import Module
-from simplegrad.tensor import Tensor
 
 
 def build_tiny_model():
@@ -77,7 +86,7 @@ def test_human_readable_formatters_preserve_exact_values():
 
     estimate = estimate_peak_memory(build_tiny_model(), 4, (1, 5, 5))
     assert format_memory_estimate(estimate) == (
-        "num params: 0.0001M (77), memory: 3.7 KB (3,736 bytes)"
+        "num params: 0.0001M (77), memory: 5.2 KB (5,184 bytes)"
     )
 
     with pytest.raises(ValueError, match="non-negative"):
@@ -94,17 +103,18 @@ def test_tiny_model_matches_hand_calculation():
     # Linear: 3*18 + 3 = 57
     assert estimate.parameter_count == 77
     assert estimate.parameters == 77 * 4
-    assert estimate.gradients == 77 * 4
     assert estimate.optimizer_state == 77 * 2 * 4
 
-    # Saved activations:
-    # input=100, Conv=72, ReLU=72, Flatten=72, Linear=12,
-    # cross-entropy probabilities=12.
-    assert estimate.activations_saved_for_backward == 340 * 4
-    # Adam dominates the simple transient model: five arrays for the largest
-    # parameter (54 float32 elements), plus two retained int64 batch vectors.
+    # Saved data: input=100, Conv=72, ReLU=72, Flatten=72,
+    # transpose=54, matmul=12, add=12, probabilities=12, loss=1.
+    assert estimate.activations_saved_for_backward == 407 * 4
+    # Gradients: 77 parameter elements plus one eager buffer for each
+    # differentiable operation output (72+72+72+54+12+12+1).
+    assert estimate.gradients == 372 * 4
+    # Adam dominates: five arrays for the largest parameter plus retained
+    # int64 target and index vectors.
     assert estimate.transient_other == 5 * 54 * 4 + 4 * 2 * 8
-    assert estimate.peak_bytes == 3736
+    assert estimate.peak_bytes == 5184
 
 
 def test_estimator_does_not_execute_supported_modules(monkeypatch):
@@ -134,13 +144,16 @@ def test_batch_size_changes_activations_and_may_change_transient_workspace():
 
     assert small.parameter_count == large.parameter_count
     assert small.parameters == large.parameters
-    assert small.gradients == large.gradients
+    assert large.gradients > small.gradients
     assert small.optimizer_state == large.optimizer_state
-    assert large.activations_saved_for_backward == (
-        2 * small.activations_saved_for_backward
+    assert large.activations_saved_for_backward > (
+        small.activations_saved_for_backward
     )
     assert large.peak_bytes - small.peak_bytes == (
-        small.activations_saved_for_backward
+        large.activations_saved_for_backward
+        - small.activations_saved_for_backward
+        + large.gradients
+        - small.gradients
         + large.transient_other
         - small.transient_other
     )
@@ -166,6 +179,25 @@ def test_depth_and_width_change_prediction():
     assert narrow.peak_bytes < wide.peak_bytes
 
 
+def test_largest_batch_size_finds_exact_cap_boundary():
+    model = build_tiny_model()
+    batch_7 = estimate_peak_memory(model, 7, (1, 5, 5)).peak_bytes
+
+    assert estimate_largest_batch_size(model, (1, 5, 5), batch_7) == 7
+    assert estimate_largest_batch_size(model, (1, 5, 5), batch_7 - 1) == 6
+    assert estimate_largest_batch_size(model, (1, 5, 5), 0) == 0
+
+
+@pytest.mark.parametrize("memory_limit", [-1, True, 1.5])
+def test_largest_batch_size_rejects_invalid_cap(memory_limit):
+    with pytest.raises((TypeError, ValueError)):
+        estimate_largest_batch_size(
+            build_tiny_model(),
+            (1, 5, 5),
+            memory_limit,
+        )
+
+
 def test_shared_parameters_count_once_and_activations_count_per_call():
     shared = Linear(3, 3)
     shared_model = Sequential(Flatten(), shared, ReLU(), shared)
@@ -176,8 +208,8 @@ def test_shared_parameters_count_once_and_activations_count_per_call():
 
     assert shared_estimate.parameter_count == 12
     assert shared_estimate.parameters == single_estimate.parameters == 48
-    assert shared_estimate.activations_saved_for_backward == 72 * 4
-    assert single_estimate.activations_saved_for_backward == 48 * 4
+    assert shared_estimate.activations_saved_for_backward == 115 * 4
+    assert single_estimate.activations_saved_for_backward == 70 * 4
 
 
 def test_biasless_conv_reduces_parameter_count():
@@ -241,3 +273,33 @@ def test_estimator_rejects_unsupported_module():
 
     with pytest.raises(TypeError, match="Unsupported"):
         estimate_peak_memory(Unsupported(), 4, (1, 5, 5))
+
+
+def test_reconciled_estimate_matches_measured_steady_state_step():
+    gc.collect()
+    model = build_tiny_model()
+    optimizer = Adam(model.parameters())
+
+    def step():
+        inputs = Tensor(np.zeros((4, 1, 5, 5), dtype=np.float32))
+        targets = np.array([0, 1, 2, 0], dtype=np.int64)
+        loss = cross_entropy(model(inputs), targets)
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        release_graph(loss)
+
+    # Warm up lazy Adam moments, then measure an equivalent steady-state step.
+    step()
+    gc.collect()
+    reset_peak_memory()
+    step()
+    gc.collect()
+
+    estimate = estimate_peak_memory(model, 4, (1, 5, 5))
+    measured = get_memory_stats()
+    assert measured.peak_bytes == estimate.peak_bytes
+    assert measured.at_peak == estimate.breakdown
+
+    del optimizer, model
+    gc.collect()
