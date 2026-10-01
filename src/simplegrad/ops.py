@@ -1,6 +1,11 @@
 import numpy as np
 
-from .memory import temporary_array, track_array
+from .memory import (
+    allocate_empty,
+    allocate_zeros,
+    create_array,
+    temporary_result,
+)
 from .tensor import Tensor, _accumulate_grad
 
 
@@ -9,8 +14,12 @@ def relu(tensor):
     if not isinstance(tensor, Tensor):
         raise TypeError("relu input must be a Tensor")
 
-    result_data = np.maximum(0, tensor.data)
-    with temporary_array(result_data, "relu.forward_result"):
+    with temporary_result(
+        tensor.data.shape,
+        np.float32,
+        "relu.forward_result",
+        lambda: np.maximum(0, tensor.data),
+    ) as result_data:
         out = Tensor(
             result_data,
             requires_grad=tensor.requires_grad,
@@ -20,8 +29,12 @@ def relu(tensor):
     def _backward():
         # The closure retains the input Tensor and recreates the boolean mask
         # during backward; forward does not save a separate mask allocation.
-        contribution = (tensor.data > 0) * out.grad
-        with temporary_array(contribution, "relu.backward_contribution"):
+        with temporary_result(
+            tensor.data.shape,
+            np.float32,
+            "relu.backward_contribution",
+            lambda: (tensor.data > 0) * out.grad,
+        ) as contribution:
             _accumulate_grad(tensor, contribution)
     
     out._backward = _backward
@@ -34,8 +47,12 @@ def sigmoid(tensor):
     if not isinstance(tensor, Tensor):
         raise TypeError("sigmoid input must be a Tensor")
 
-    result_data = 1 / (1 + np.exp(-tensor.data))
-    with temporary_array(result_data, "sigmoid.forward_result"):
+    with temporary_result(
+        tensor.data.shape,
+        np.float32,
+        "sigmoid.forward_result",
+        lambda: 1 / (1 + np.exp(-tensor.data)),
+    ) as result_data:
         out = Tensor(
             result_data,
             requires_grad=tensor.requires_grad,
@@ -43,8 +60,12 @@ def sigmoid(tensor):
         )
     
     def _backward():
-        contribution = out.data * (1 - out.data) * out.grad
-        with temporary_array(contribution, "sigmoid.backward_contribution"):
+        with temporary_result(
+            tensor.data.shape,
+            np.float32,
+            "sigmoid.backward_contribution",
+            lambda: out.data * (1 - out.data) * out.grad,
+        ) as contribution:
             _accumulate_grad(tensor, contribution)
     
     out._backward = _backward
@@ -64,8 +85,13 @@ def matmul(tensor1, tensor2):
             f"got {tensor1.data.shape} and {tensor2.data.shape}"
         )
 
-    result_data = tensor1.data @ tensor2.data
-    with temporary_array(result_data, "matmul.forward_result"):
+    output_shape = (tensor1.data.shape[0], tensor2.data.shape[1])
+    with temporary_result(
+        output_shape,
+        np.float32,
+        "matmul.forward_result",
+        lambda: tensor1.data @ tensor2.data,
+    ) as result_data:
         out = Tensor(
             result_data,
             requires_grad=tensor1.requires_grad or tensor2.requires_grad,
@@ -73,12 +99,19 @@ def matmul(tensor1, tensor2):
         )
     
     def _backward():
-        first_contribution = out.grad @ tensor2.data.T
-        with temporary_array(first_contribution, "matmul.backward_left"):
+        with temporary_result(
+            tensor1.data.shape,
+            np.float32,
+            "matmul.backward_left",
+            lambda: out.grad @ tensor2.data.T,
+        ) as first_contribution:
             _accumulate_grad(tensor1, first_contribution)
-        del first_contribution
-        second_contribution = tensor1.data.T @ out.grad
-        with temporary_array(second_contribution, "matmul.backward_right"):
+        with temporary_result(
+            tensor2.data.shape,
+            np.float32,
+            "matmul.backward_right",
+            lambda: tensor1.data.T @ out.grad,
+        ) as second_contribution:
             _accumulate_grad(tensor2, second_contribution)
     
     out._backward = _backward
@@ -177,12 +210,10 @@ def conv2d(x, weight, bias=None):
         )
 
     output_side = height - kernel_height + 1
-    output_data = np.empty(
-        (batch_size, out_channels, output_side, output_side),
-        dtype=np.float32,
-    )
-    output_handle = track_array(
-        output_data,
+    output_shape = (batch_size, out_channels, output_side, output_side)
+    output_data, output_handle = allocate_empty(
+        output_shape,
+        np.float32,
         "transient_other",
         "conv2d.forward_output_workspace",
     )
@@ -198,15 +229,18 @@ def conv2d(x, weight, bias=None):
                     output_y : output_y + kernel_height,
                     output_x : output_x + kernel_width,
                 ]
-                patch_result = np.einsum(
-                    "bcij,ocij->bo",
-                    patch,
-                    weight.data,
-                    optimize=False,
-                )
-                with temporary_array(patch_result, "conv2d.forward_einsum"):
+                with temporary_result(
+                    (batch_size, out_channels),
+                    np.float32,
+                    "conv2d.forward_einsum",
+                    lambda: np.einsum(
+                        "bcij,ocij->bo",
+                        patch,
+                        weight.data,
+                        optimize=False,
+                    ),
+                ) as patch_result:
                     output_data[:, :, output_y, output_x] = patch_result
-                del patch_result
 
         if bias is not None:
             output_data += bias.data[None, :, None, None]
@@ -223,28 +257,26 @@ def conv2d(x, weight, bias=None):
         output_handle.release()
 
     def _backward():
-        input_gradient = np.zeros_like(x.data) if x.requires_grad else None
-        weight_gradient = (
-            np.zeros_like(weight.data) if weight.requires_grad else None
-        )
         workspace_handles = []
-        if input_gradient is not None:
-            workspace_handles.append(
-                track_array(
-                    input_gradient,
+        input_gradient = None
+        weight_gradient = None
+        try:
+            if x.requires_grad:
+                input_gradient, input_handle = allocate_zeros(
+                    x.data.shape,
+                    np.float32,
                     "transient_other",
                     "conv2d.backward_input",
                 )
-            )
-        if weight_gradient is not None:
-            workspace_handles.append(
-                track_array(
-                    weight_gradient,
+                workspace_handles.append(input_handle)
+            if weight.requires_grad:
+                weight_gradient, weight_handle = allocate_zeros(
+                    weight.data.shape,
+                    np.float32,
                     "transient_other",
                     "conv2d.backward_weight",
                 )
-            )
-        try:
+                workspace_handles.append(weight_handle)
             for output_y in range(output_side):
                 for output_x in range(output_side):
                     output_gradient = out.grad[:, :, output_y, output_x]
@@ -256,45 +288,54 @@ def conv2d(x, weight, bias=None):
                     ]
 
                     if input_gradient is not None:
-                        contribution = np.einsum(
-                            "bo,ocij->bcij",
-                            output_gradient,
-                            weight.data,
-                            optimize=False,
-                        )
-                        with temporary_array(
-                            contribution,
+                        with temporary_result(
+                            (
+                                batch_size,
+                                in_channels,
+                                kernel_height,
+                                kernel_width,
+                            ),
+                            np.float32,
                             "conv2d.backward_input_einsum",
-                        ):
+                            lambda: np.einsum(
+                                "bo,ocij->bcij",
+                                output_gradient,
+                                weight.data,
+                                optimize=False,
+                            ),
+                        ) as contribution:
                             input_gradient[
                                 :,
                                 :,
                                 output_y : output_y + kernel_height,
                                 output_x : output_x + kernel_width,
                             ] += contribution
-                        del contribution
 
                     if weight_gradient is not None:
-                        contribution = np.einsum(
-                            "bo,bcij->ocij",
-                            output_gradient,
-                            patch,
-                            optimize=False,
-                        )
-                        with temporary_array(
-                            contribution,
+                        with temporary_result(
+                            weight.data.shape,
+                            np.float32,
                             "conv2d.backward_weight_einsum",
-                        ):
+                            lambda: np.einsum(
+                                "bo,bcij->ocij",
+                                output_gradient,
+                                patch,
+                                optimize=False,
+                            ),
+                        ) as contribution:
                             weight_gradient += contribution
-                        del contribution
 
             if input_gradient is not None:
                 _accumulate_grad(x, input_gradient)
             if weight_gradient is not None:
                 _accumulate_grad(weight, weight_gradient)
             if bias is not None and bias.requires_grad:
-                bias_gradient = out.grad.sum(axis=(0, 2, 3), dtype=np.float32)
-                with temporary_array(bias_gradient, "conv2d.backward_bias"):
+                with temporary_result(
+                    (out_channels,),
+                    np.float32,
+                    "conv2d.backward_bias",
+                    lambda: out.grad.sum(axis=(0, 2, 3), dtype=np.float32),
+                ) as bias_gradient:
                     _accumulate_grad(bias, bias_gradient)
         finally:
             for handle in reversed(workspace_handles):
@@ -321,87 +362,104 @@ def cross_entropy(logits, targets):
     if class_count == 0:
         raise ValueError("cross_entropy requires at least one class")
 
-    target_data = np.asarray(targets)
-    if target_data.shape != (batch_size,):
+    target_view = np.asarray(targets)
+    if target_view.shape != (batch_size,):
         raise ValueError(
-            f"targets must have shape {(batch_size,)}, got {target_data.shape}"
+            f"targets must have shape {(batch_size,)}, got {target_view.shape}"
         )
-    if not np.issubdtype(target_data.dtype, np.integer):
+    if not np.issubdtype(target_view.dtype, np.integer):
         raise TypeError("cross_entropy targets must contain integer class indices")
-    target_data = target_data.astype(np.int64, copy=True)
-    if np.any(target_data < 0) or np.any(target_data >= class_count):
-        raise ValueError(
-            f"target class indices must be in [0, {class_count})"
-        )
 
     temporary_handles = []
     saved_handles = []
     try:
-        row_maxima = logits.data.max(axis=1, keepdims=True)
-        temporary_handles.append(
-            track_array(row_maxima, "transient_other", "cross_entropy.row_maxima")
+        target_data, target_handle = create_array(
+            (batch_size,),
+            np.int64,
+            "transient_other",
+            "cross_entropy.targets",
+            lambda: target_view.astype(np.int64, copy=True),
         )
-        shifted = logits.data - row_maxima
-        temporary_handles.append(
-            track_array(shifted, "transient_other", "cross_entropy.shifted")
-        )
-        exponentials = np.exp(shifted)
-        temporary_handles.append(
-            track_array(
-                exponentials,
-                "transient_other",
-                "cross_entropy.exponentials",
+        saved_handles.append(target_handle)
+        if np.any(target_data < 0) or np.any(target_data >= class_count):
+            raise ValueError(
+                f"target class indices must be in [0, {class_count})"
             )
+        row_maxima, handle = create_array(
+            (batch_size, 1),
+            np.float32,
+            "transient_other",
+            "cross_entropy.row_maxima",
+            lambda: logits.data.max(axis=1, keepdims=True),
         )
-        normalizers = exponentials.sum(axis=1, keepdims=True, dtype=np.float32)
-        temporary_handles.append(
-            track_array(
-                normalizers,
-                "transient_other",
-                "cross_entropy.normalizers",
+        temporary_handles.append(handle)
+        shifted, handle = create_array(
+            logits.data.shape,
+            np.float32,
+            "transient_other",
+            "cross_entropy.shifted",
+            lambda: logits.data - row_maxima,
+        )
+        temporary_handles.append(handle)
+        exponentials, handle = create_array(
+            logits.data.shape,
+            np.float32,
+            "transient_other",
+            "cross_entropy.exponentials",
+            lambda: np.exp(shifted),
+        )
+        temporary_handles.append(handle)
+        normalizers, handle = create_array(
+            (batch_size, 1),
+            np.float32,
+            "transient_other",
+            "cross_entropy.normalizers",
+            lambda: exponentials.sum(axis=1, keepdims=True, dtype=np.float32),
+        )
+        temporary_handles.append(handle)
+        probabilities, handle = create_array(
+            logits.data.shape,
+            np.float32,
+            "activations_saved_for_backward",
+            "cross_entropy.probabilities",
+            lambda: exponentials / normalizers,
+        )
+        saved_handles.append(handle)
+        log_normalizers, handle = create_array(
+            (batch_size,),
+            np.float32,
+            "transient_other",
+            "cross_entropy.log_normalizers",
+            lambda: np.log(normalizers[:, 0]),
+        )
+        temporary_handles.append(handle)
+        batch_indices, handle = create_array(
+            (batch_size,),
+            np.int64,
+            "transient_other",
+            "cross_entropy.batch_indices",
+            lambda: np.arange(batch_size, dtype=np.int64),
+        )
+        saved_handles.append(handle)
+        per_example, handle = create_array(
+            (batch_size,),
+            np.float32,
+            "transient_other",
+            "cross_entropy.per_example",
+            lambda: log_normalizers - shifted[batch_indices, target_data],
+        )
+        temporary_handles.append(handle)
+        with temporary_result(
+            (),
+            np.float32,
+            "cross_entropy.loss_scalar",
+            lambda: np.asarray(per_example.mean(dtype=np.float32)),
+        ) as loss_data:
+            out = Tensor(
+                loss_data,
+                requires_grad=logits.requires_grad,
+                _source="cross_entropy.output",
             )
-        )
-        probabilities = exponentials / normalizers
-        saved_handles.append(
-            track_array(
-                probabilities,
-                "activations_saved_for_backward",
-                "cross_entropy.probabilities",
-            )
-        )
-        saved_handles.append(
-            track_array(target_data, "transient_other", "cross_entropy.targets")
-        )
-        log_normalizers = np.log(normalizers[:, 0])
-        temporary_handles.append(
-            track_array(
-                log_normalizers,
-                "transient_other",
-                "cross_entropy.log_normalizers",
-            )
-        )
-        batch_indices = np.arange(batch_size, dtype=np.int64)
-        saved_handles.append(
-            track_array(
-                batch_indices,
-                "transient_other",
-                "cross_entropy.batch_indices",
-            )
-        )
-        per_example = log_normalizers - shifted[batch_indices, target_data]
-        temporary_handles.append(
-            track_array(
-                per_example,
-                "transient_other",
-                "cross_entropy.per_example",
-            )
-        )
-        loss_data = per_example.mean(dtype=np.float32)
-        out = Tensor(
-            loss_data,
-            requires_grad=logits.requires_grad,
-            _source="cross_entropy.output",
-        )
         for handle in saved_handles:
             out._save_handle(handle)
         saved_handles.clear()
@@ -414,8 +472,12 @@ def cross_entropy(logits, targets):
     def _backward():
         if not logits.requires_grad:
             return
-        logits_gradient = probabilities.copy()
-        with temporary_array(logits_gradient, "cross_entropy.backward_logits"):
+        with temporary_result(
+            logits.data.shape,
+            np.float32,
+            "cross_entropy.backward_logits",
+            lambda: probabilities.copy(),
+        ) as logits_gradient:
             logits_gradient[batch_indices, target_data] -= np.float32(1.0)
             logits_gradient *= out.grad / np.float32(batch_size)
             _accumulate_grad(logits, logits_gradient)

@@ -2,6 +2,7 @@
 """Train a small MNIST classifier entirely with simple-grad."""
 
 import argparse
+import gc
 import json
 import os
 from pathlib import Path
@@ -24,6 +25,7 @@ from simplegrad import (
     get_memory_stats,
     release_graph,
     reset_peak_memory,
+    set_memory_limit,
 )
 
 
@@ -39,6 +41,13 @@ def parse_args():
     parser.add_argument("--depth", type=int, default=2)
     parser.add_argument("--width", type=int, default=8)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
+    parser.add_argument(
+        "--memory-limit",
+        type=int,
+        default=None,
+        metavar="BYTES",
+        help="maximum simple-grad live memory in bytes",
+    )
     return parser.parse_args()
 
 
@@ -105,6 +114,7 @@ def train_epoch(model, optimizer, images, labels, batch_size, rng):
         loss_sum += float(loss.data) * len(indices)
         correct += int(np.sum(np.argmax(logits.data, axis=1) == targets))
         release_graph(loss)
+        gc.collect()
 
     return loss_sum / len(images), correct / len(images)
 
@@ -118,6 +128,7 @@ def evaluate(model, images, labels, batch_size):
         logits = model(inputs)
         correct += int(np.sum(np.argmax(logits.data, axis=1) == targets))
         release_graph(logits)
+        gc.collect()
     return correct, correct / len(images)
 
 
@@ -135,6 +146,8 @@ def main():
     args = parse_args()
     if args.epochs <= 0 or args.batch_size <= 0 or args.learning_rate <= 0:
         raise ValueError("epochs, batch_size, and learning_rate must be positive")
+    if args.memory_limit is not None and args.memory_limit < 0:
+        raise ValueError("memory_limit must be non-negative")
 
     train_images, train_labels, test_images, test_labels = load_mnist(
         args.data_dir,
@@ -144,6 +157,9 @@ def main():
     )
 
     np.random.seed(args.seed)
+    if args.memory_limit is not None:
+        set_memory_limit(args.memory_limit)
+        print(f"memory_limit={args.memory_limit:,} bytes", flush=True)
     model = build_model(args.depth, args.width)
     memory_estimate = estimate_peak_memory(
         model,

@@ -1,7 +1,12 @@
 import numpy as np
 import torch
 
-from .memory import temporary_array, track_array
+from .memory import (
+    allocate_copy,
+    allocate_zeros,
+    create_array,
+    temporary_result,
+)
 
 
 def _noop_backward():
@@ -104,9 +109,21 @@ class Tensor:
         self._data_category = _data_category
         self._source = _source
         self._saved_handles = []
-        self.data = data
         self.requires_grad = requires_grad
-        self.grad = np.zeros_like(self.data) if requires_grad else None
+        self.data = data
+        try:
+            if requires_grad:
+                self._grad, self._grad_handle = allocate_zeros(
+                    self.data.shape,
+                    np.float32,
+                    "gradients",
+                    f"{self._source}.grad",
+                )
+        except Exception:
+            self._data_handle.release()
+            self._data_handle = None
+            self._data = None
+            raise
         self._backward = _noop_backward
         self._prev = ()
 
@@ -116,8 +133,12 @@ class Tensor:
 
     @data.setter
     def data(self, value):
-        array = np.array(value, dtype=np.float32, copy=True)
-        handle = track_array(array, self._data_category, f"{self._source}.data")
+        array, handle = allocate_copy(
+            value,
+            np.float32,
+            self._data_category,
+            f"{self._source}.data",
+        )
         if self._data_handle is not None:
             self._data_handle.release()
         self._data = array
@@ -135,8 +156,14 @@ class Tensor:
             self._grad = None
             self._grad_handle = None
             return
-        array = np.asarray(value, dtype=np.float32)
-        handle = track_array(array, "gradients", f"{self._source}.grad")
+        shape = np.shape(value)
+        array, handle = create_array(
+            shape,
+            np.float32,
+            "gradients",
+            f"{self._source}.grad",
+            lambda: np.asarray(value, dtype=np.float32),
+        )
         if self._grad_handle is not None:
             self._grad_handle.release()
         self._grad = array
@@ -184,8 +211,13 @@ class Tensor:
     
     def __add__(self, other):
         assert isinstance(other, Tensor), "Operand must be a Tensor"
-        result_data = self.data + other.data
-        with temporary_array(result_data, "add.forward_result"):
+        result_shape = np.broadcast_shapes(self.data.shape, other.data.shape)
+        with temporary_result(
+            result_shape,
+            np.float32,
+            "add.forward_result",
+            lambda: self.data + other.data,
+        ) as result_data:
             out = Tensor(
                 result_data,
                 requires_grad=self.requires_grad or other.requires_grad,
@@ -193,26 +225,33 @@ class Tensor:
             )
         
         def _backward():
-            self_contribution = sum_to_shape(out.grad, self.data.shape)
-            self_handle = (
-                None
-                if np.shares_memory(self_contribution, out.grad)
-                else track_array(
-                    self_contribution,
+            if self.data.shape == out.grad.shape:
+                self_contribution = out.grad.reshape(self.data.shape)
+                self_handle = None
+            else:
+                self_contribution, self_handle = create_array(
+                    self.data.shape,
+                    np.float32,
                     "transient_other",
                     "add.backward_left",
+                    lambda: sum_to_shape(out.grad, self.data.shape),
                 )
-            )
-            other_contribution = sum_to_shape(out.grad, other.data.shape)
-            other_handle = (
-                None
-                if np.shares_memory(other_contribution, out.grad)
-                else track_array(
-                    other_contribution,
-                    "transient_other",
-                    "add.backward_right",
-                )
-            )
+            try:
+                if other.data.shape == out.grad.shape:
+                    other_contribution = out.grad.reshape(other.data.shape)
+                    other_handle = None
+                else:
+                    other_contribution, other_handle = create_array(
+                        other.data.shape,
+                        np.float32,
+                        "transient_other",
+                        "add.backward_right",
+                        lambda: sum_to_shape(out.grad, other.data.shape),
+                    )
+            except Exception:
+                if self_handle is not None:
+                    self_handle.release()
+                raise
             try:
                 _accumulate_grad(self, self_contribution)
                 _accumulate_grad(other, other_contribution)
@@ -229,8 +268,12 @@ class Tensor:
     def __pow__(self, other):
         assert isinstance(other, (int, float)), "exponent must be an int or float"
 
-        result_data = self.data**other
-        with temporary_array(result_data, "power.forward_result"):
+        with temporary_result(
+            self.data.shape,
+            np.float32,
+            "power.forward_result",
+            lambda: self.data**other,
+        ) as result_data:
             out = Tensor(
                 result_data,
                 requires_grad=self.requires_grad,
@@ -238,8 +281,12 @@ class Tensor:
             )
 
         def _backward():
-            contribution = (other * self.data ** (other - 1)) * out.grad
-            with temporary_array(contribution, "power.backward_contribution"):
+            with temporary_result(
+                self.data.shape,
+                np.float32,
+                "power.backward_contribution",
+                lambda: (other * self.data ** (other - 1)) * out.grad,
+            ) as contribution:
                 _accumulate_grad(self, contribution)
         out._backward = _backward
         out._prev = (self,)
@@ -248,8 +295,13 @@ class Tensor:
 
     def __mul__(self, other):
         assert isinstance(other, Tensor), "Operand must be a Tensor"
-        result_data = self.data * other.data
-        with temporary_array(result_data, "multiply.forward_result"):
+        result_shape = np.broadcast_shapes(self.data.shape, other.data.shape)
+        with temporary_result(
+            result_shape,
+            np.float32,
+            "multiply.forward_result",
+            lambda: self.data * other.data,
+        ) as result_data:
             out = Tensor(
                 result_data,
                 requires_grad=self.requires_grad or other.requires_grad,
@@ -257,24 +309,30 @@ class Tensor:
             )
 
         def _backward():
-            self_contribution = sum_to_shape(
-                other.data * out.grad,
+            self_contribution, self_handle = create_array(
                 self.data.shape,
-            )
-            other_contribution = sum_to_shape(
-                self.data * out.grad,
-                other.data.shape,
-            )
-            self_handle = track_array(
-                self_contribution,
+                np.float32,
                 "transient_other",
                 "multiply.backward_left",
+                lambda: sum_to_shape(
+                    other.data * out.grad,
+                    self.data.shape,
+                ),
             )
-            other_handle = track_array(
-                other_contribution,
-                "transient_other",
-                "multiply.backward_right",
-            )
+            try:
+                other_contribution, other_handle = create_array(
+                    other.data.shape,
+                    np.float32,
+                    "transient_other",
+                    "multiply.backward_right",
+                    lambda: sum_to_shape(
+                        self.data * out.grad,
+                        other.data.shape,
+                    ),
+                )
+            except Exception:
+                self_handle.release()
+                raise
             try:
                 _accumulate_grad(self, self_contribution)
                 _accumulate_grad(other, other_contribution)
@@ -293,11 +351,12 @@ class Tensor:
 
         upstream_handle = None
         if upstream is None:
-            upstream_data = np.ones_like(self.data)
-            upstream_handle = track_array(
-                upstream_data,
+            upstream_data, upstream_handle = create_array(
+                self.data.shape,
+                np.float32,
                 "transient_other",
                 "backward.upstream",
+                lambda: np.ones_like(self.data),
             )
         else:
             if isinstance(upstream, Tensor):

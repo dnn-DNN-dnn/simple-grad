@@ -84,6 +84,34 @@ class MemoryStats:
         }
 
 
+class MemoryLimitExceeded(MemoryError):
+    """Raised before a simple-grad allocation would exceed its memory cap."""
+
+    def __init__(
+        self,
+        *,
+        limit_bytes,
+        current_bytes,
+        requested_bytes,
+        category,
+        source,
+    ):
+        self.limit_bytes = _byte_count(limit_bytes, "limit_bytes")
+        self.current_bytes = _byte_count(current_bytes, "current_bytes")
+        self.requested_bytes = _byte_count(requested_bytes, "requested_bytes")
+        self.would_be_bytes = self.current_bytes + self.requested_bytes
+        self.category = category
+        self.source = source
+        super().__init__(
+            "simple-grad memory limit exceeded: "
+            f"source={source}, category={category}, "
+            f"current={self.current_bytes:,} bytes, "
+            f"requested={self.requested_bytes:,} bytes, "
+            f"would_be={self.would_be_bytes:,} bytes, "
+            f"limit={self.limit_bytes:,} bytes"
+        )
+
+
 class AllocationHandle:
     """Explicit ownership token for one accounted allocation."""
 
@@ -125,6 +153,7 @@ class MemoryTracker:
         self._at_peak = self._breakdown()
         self._peak_source = None
         self._events = deque(maxlen=4096)
+        self._limit_bytes = None
 
     def _breakdown(self):
         return MemoryBreakdown(**self._current)
@@ -135,6 +164,19 @@ class MemoryTracker:
             raise ValueError(f"unknown memory category: {category!r}")
         if not isinstance(source, str) or not source:
             raise ValueError("source must be a non-empty string")
+
+        current_bytes = sum(self._current.values())
+        if (
+            self._limit_bytes is not None
+            and current_bytes + nbytes > self._limit_bytes
+        ):
+            raise MemoryLimitExceeded(
+                limit_bytes=self._limit_bytes,
+                current_bytes=current_bytes,
+                requested_bytes=nbytes,
+                category=category,
+                source=source,
+            )
 
         allocation_id = self._next_id
         self._next_id += 1
@@ -192,6 +234,26 @@ class MemoryTracker:
     def events(self):
         return tuple(self._events)
 
+    def set_limit(self, byte_limit):
+        if byte_limit is None:
+            self._limit_bytes = None
+            return
+        byte_limit = _byte_count(byte_limit, "byte_limit")
+        current_bytes = sum(self._current.values())
+        if current_bytes > byte_limit:
+            raise MemoryLimitExceeded(
+                limit_bytes=byte_limit,
+                current_bytes=current_bytes,
+                requested_bytes=0,
+                category="memory_limit",
+                source="set_memory_limit",
+            )
+        self._limit_bytes = byte_limit
+
+    @property
+    def limit_bytes(self):
+        return self._limit_bytes
+
 
 _TRACKER = MemoryTracker()
 
@@ -206,6 +268,95 @@ def track_array(array, category, source):
     if not isinstance(array, np.ndarray):
         array = np.asarray(array)
     return track_bytes(array.nbytes, category, source)
+
+
+def array_nbytes(shape, dtype):
+    """Return exact array payload bytes without allocating the array."""
+    try:
+        shape = tuple(shape)
+    except TypeError as exc:
+        raise TypeError("shape must be an iterable of non-negative integers") from exc
+    element_count = 1
+    for size in shape:
+        if (
+            isinstance(size, (bool, np.bool_))
+            or not isinstance(size, Integral)
+            or size < 0
+        ):
+            raise ValueError("shape must contain non-negative integers")
+        element_count *= int(size)
+    return element_count * np.dtype(dtype).itemsize
+
+
+def create_array(shape, dtype, category, source, factory):
+    """Reserve expected bytes, create an array, and roll back on failure."""
+    expected_nbytes = array_nbytes(shape, dtype)
+    handle = track_bytes(expected_nbytes, category, source)
+    try:
+        array = factory()
+        if not isinstance(array, np.ndarray):
+            array = np.asarray(array)
+        if (
+            array.shape != tuple(shape)
+            or array.dtype != np.dtype(dtype)
+            or array.nbytes != expected_nbytes
+        ):
+            raise RuntimeError(
+                f"{source} produced shape={array.shape}, dtype={array.dtype}, "
+                f"nbytes={array.nbytes}; expected shape={tuple(shape)}, "
+                f"dtype={np.dtype(dtype)}, nbytes={expected_nbytes}"
+            )
+    except Exception:
+        handle.release()
+        raise
+    return array, handle
+
+
+def allocate_empty(shape, dtype, category, source):
+    return create_array(
+        shape,
+        dtype,
+        category,
+        source,
+        lambda: np.empty(shape, dtype=dtype),
+    )
+
+
+def allocate_zeros(shape, dtype, category, source):
+    return create_array(
+        shape,
+        dtype,
+        category,
+        source,
+        lambda: np.zeros(shape, dtype=dtype),
+    )
+
+
+def allocate_copy(value, dtype, category, source):
+    shape = np.shape(value)
+    return create_array(
+        shape,
+        dtype,
+        category,
+        source,
+        lambda: np.array(value, dtype=dtype, copy=True),
+    )
+
+
+@contextmanager
+def temporary_result(shape, dtype, source, factory):
+    """Reserve and create a transient expression result before yielding it."""
+    array, handle = create_array(
+        shape,
+        dtype,
+        "transient_other",
+        source,
+        factory,
+    )
+    try:
+        yield array
+    finally:
+        handle.release()
 
 
 @contextmanager
@@ -231,3 +382,13 @@ def reset_peak_memory():
 def get_memory_event_trace():
     """Return up to the 4,096 most recent events since the peak reset."""
     return _TRACKER.events()
+
+
+def set_memory_limit(byte_limit):
+    """Set an absolute live-byte cap, or pass ``None`` to disable it."""
+    _TRACKER.set_limit(byte_limit)
+
+
+def get_memory_limit():
+    """Return the active live-byte cap, or ``None`` when disabled."""
+    return _TRACKER.limit_bytes

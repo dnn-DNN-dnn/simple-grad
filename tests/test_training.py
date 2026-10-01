@@ -70,6 +70,7 @@ def test_mnist_training_script_runs_offline_and_writes_metrics(tmp_path):
     assert metrics["total_training_seconds"] >= 0
     assert metrics["total_process_seconds"] >= metrics["total_training_seconds"]
     assert 0 <= metrics["final_accuracy"] <= 1
+    assert metrics["config"]["memory_limit"] is None
     memory_estimate = metrics["memory_estimate"]
     breakdown = memory_estimate["breakdown"]
     assert memory_estimate["parameter_count"] > 0

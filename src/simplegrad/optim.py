@@ -2,7 +2,7 @@ from numbers import Real
 
 import numpy as np
 
-from .memory import temporary_array, track_array
+from .memory import allocate_zeros, create_array, temporary_result
 from .tensor import Tensor
 
 
@@ -74,24 +74,27 @@ class Adam:
 
     def _initialize_state(self, parameter):
         """Create float32 moment buffers for one parameter on first use."""
-        first_moment = np.zeros_like(parameter.data, dtype=np.float32)
-        second_moment = np.zeros_like(parameter.data, dtype=np.float32)
+        first_moment, first_handle = allocate_zeros(
+            parameter.data.shape,
+            np.float32,
+            "optimizer_state",
+            "adam.exp_avg",
+        )
+        try:
+            second_moment, second_handle = allocate_zeros(
+                parameter.data.shape,
+                np.float32,
+                "optimizer_state",
+                "adam.exp_avg_sq",
+            )
+        except Exception:
+            first_handle.release()
+            raise
         state = {
             "step": 0,
             "exp_avg": first_moment,
             "exp_avg_sq": second_moment,
-            "_handles": (
-                track_array(
-                    first_moment,
-                    "optimizer_state",
-                    "adam.exp_avg",
-                ),
-                track_array(
-                    second_moment,
-                    "optimizer_state",
-                    "adam.exp_avg_sq",
-                ),
-            ),
+            "_handles": (first_handle, second_handle),
         }
         self.state[parameter] = state
         return state
@@ -131,45 +134,82 @@ class Adam:
             # Update persistent moments in place to keep their allocation and
             # identity stable across training steps.
             first_moment *= beta1
-            first_update = one_minus_beta1 * gradient
-            with temporary_array(first_update, "adam.first_moment_update"):
+            with temporary_result(
+                parameter.data.shape,
+                np.float32,
+                "adam.first_moment_update",
+                lambda: one_minus_beta1 * gradient,
+            ) as first_update:
                 first_moment += first_update
             del first_update
             second_moment *= beta2
-            squared_gradient = gradient * gradient
-            with temporary_array(squared_gradient, "adam.squared_gradient"):
-                second_update = one_minus_beta2 * squared_gradient
-                with temporary_array(second_update, "adam.second_moment_update"):
+            with temporary_result(
+                parameter.data.shape,
+                np.float32,
+                "adam.squared_gradient",
+                lambda: gradient * gradient,
+            ) as squared_gradient:
+                with temporary_result(
+                    parameter.data.shape,
+                    np.float32,
+                    "adam.second_moment_update",
+                    lambda: one_minus_beta2 * squared_gradient,
+                ) as second_update:
                     second_moment += second_update
                 del second_update
             del squared_gradient
 
             bias_correction1 = np.float32(1.0 - self.beta1**step)
             bias_correction2 = np.float32(1.0 - self.beta2**step)
-            corrected_first_moment = first_moment / bias_correction1
-            with temporary_array(corrected_first_moment, "adam.corrected_first"):
-                corrected_second_moment = second_moment / bias_correction2
-                with temporary_array(corrected_second_moment, "adam.corrected_second"):
-                    square_root = np.sqrt(corrected_second_moment)
-                    square_root_handle = track_array(
-                        square_root,
+            with temporary_result(
+                parameter.data.shape,
+                np.float32,
+                "adam.corrected_first",
+                lambda: first_moment / bias_correction1,
+            ) as corrected_first_moment:
+                with temporary_result(
+                    parameter.data.shape,
+                    np.float32,
+                    "adam.corrected_second",
+                    lambda: second_moment / bias_correction2,
+                ) as corrected_second_moment:
+                    square_root, square_root_handle = create_array(
+                        parameter.data.shape,
+                        np.float32,
                         "transient_other",
                         "adam.square_root",
+                        lambda: np.sqrt(corrected_second_moment),
                     )
                     try:
-                        denominator = square_root + epsilon
+                        denominator, denominator_handle = create_array(
+                            parameter.data.shape,
+                            np.float32,
+                            "transient_other",
+                            "adam.denominator",
+                            lambda: square_root + epsilon,
+                        )
                     finally:
                         square_root_handle.release()
                         del square_root
-                    with temporary_array(denominator, "adam.denominator"):
-                        numerator = learning_rate * corrected_first_moment
-                        with temporary_array(numerator, "adam.numerator"):
-                            update = numerator / denominator
-                            with temporary_array(update, "adam.update"):
+                    try:
+                        with temporary_result(
+                            parameter.data.shape,
+                            np.float32,
+                            "adam.numerator",
+                            lambda: learning_rate * corrected_first_moment,
+                        ) as numerator:
+                            with temporary_result(
+                                parameter.data.shape,
+                                np.float32,
+                                "adam.update",
+                                lambda: numerator / denominator,
+                            ) as update:
                                 # Raw ndarray mutation is deliberately outside autograd.
                                 parameter.data[...] -= update
                             del update
                         del numerator
-                    del denominator
+                    finally:
+                        denominator_handle.release()
+                        del denominator
                 del corrected_second_moment
             del corrected_first_moment
