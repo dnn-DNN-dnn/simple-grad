@@ -1,6 +1,6 @@
 import numpy as np
 
-from .ops import conv2d, flatten, matmul, relu
+from .ops import conv2d, conv2d_im2col, conv2d_strided, flatten, matmul, relu
 from .tensor import Tensor
 
 
@@ -102,6 +102,7 @@ class Conv2d(Module):
         padding=0,
         dilation=1,
         groups=1,
+        implementation="patch",
     ):
         self.in_channels = _positive_integer(in_channels, "in_channels")
         self.out_channels = _positive_integer(out_channels, "out_channels")
@@ -112,6 +113,11 @@ class Conv2d(Module):
             raise ValueError(
                 "Conv2d supports only stride=1, padding=0, dilation=1, groups=1"
             )
+        if implementation not in ("patch", "strided", "im2col"):
+            raise ValueError(
+                "implementation must be 'patch', 'strided', or 'im2col'"
+            )
+        self.implementation = implementation
 
         # Match Linear's small-normal policy for now. Initialization can be
         # revisited using training evidence without changing the layer API.
@@ -139,7 +145,12 @@ class Conv2d(Module):
                 f"Conv2d expected BCHW input with {self.in_channels} channels, "
                 f"got {x.data.shape}"
             )
-        return conv2d(x, self.weight, self.bias)
+        operation = {
+            "patch": conv2d,
+            "strided": conv2d_strided,
+            "im2col": conv2d_im2col,
+        }[self.implementation]
+        return operation(x, self.weight, self.bias)
 
     def parameters(self):
         return [self.weight] if self.bias is None else [self.weight, self.bias]

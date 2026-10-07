@@ -104,15 +104,8 @@ def flatten(tensor, start_dim=1):
     return reshape(tensor, output_shape)
 
 
-def conv2d(x, weight, bias=None):
-    """Apply a stride-1, no-padding 2D convolution to BCHW input.
-
-    Args:
-        x: Input Tensor with shape ``(batch, in_channels, height, width)``.
-        weight: Filter Tensor with shape
-            ``(out_channels, in_channels, kernel, kernel)``.
-        bias: Optional Tensor with shape ``(out_channels,)``.
-    """
+def _validate_conv2d_inputs(x, weight, bias):
+    """Validate shared convolution geometry and return its dimensions."""
     if not isinstance(x, Tensor) or not isinstance(weight, Tensor):
         raise TypeError("conv2d input and weight must be Tensors")
     if bias is not None and not isinstance(bias, Tensor):
@@ -143,6 +136,29 @@ def conv2d(x, weight, bias=None):
         raise ValueError(
             f"conv2d bias must have shape {(out_channels,)}, got {bias.data.shape}"
         )
+
+    return (
+        batch_size,
+        in_channels,
+        height,
+        width,
+        out_channels,
+        kernel_height,
+        kernel_width,
+    )
+
+
+def conv2d(x, weight, bias=None):
+    """Apply convolution by contracting one input-patch view at a time."""
+    (
+        batch_size,
+        in_channels,
+        height,
+        width,
+        out_channels,
+        kernel_height,
+        kernel_width,
+    ) = _validate_conv2d_inputs(x, weight, bias)
 
     output_side = height - kernel_height + 1
     output_data = np.empty(
@@ -216,6 +232,170 @@ def conv2d(x, weight, bias=None):
             _accumulate_grad(x, input_gradient)
         if weight_gradient is not None:
             _accumulate_grad(weight, weight_gradient)
+        if bias is not None and bias.requires_grad:
+            bias_gradient = out.grad.sum(axis=(0, 2, 3), dtype=np.float32)
+            _accumulate_grad(bias, bias_gradient)
+
+    out._backward = _backward
+    parents = (x, weight) if bias is None else (x, weight, bias)
+    out._prev = parents
+    return out
+
+
+def conv2d_im2col(x, weight, bias=None):
+    """Apply convolution by materializing all patches for one matrix multiply."""
+    (
+        batch_size,
+        in_channels,
+        height,
+        _,
+        out_channels,
+        kernel_height,
+        kernel_width,
+    ) = _validate_conv2d_inputs(x, weight, bias)
+
+    output_side = height - kernel_height + 1
+    patch_elements = in_channels * kernel_height * kernel_width
+    row_count = batch_size * output_side * output_side
+    columns = np.empty(
+        (
+            batch_size,
+            output_side,
+            output_side,
+            in_channels,
+            kernel_height,
+            kernel_width,
+        ),
+        dtype=np.float32,
+    )
+    for output_y in range(output_side):
+        for output_x in range(output_side):
+            columns[:, output_y, output_x] = x.data[
+                :,
+                :,
+                output_y : output_y + kernel_height,
+                output_x : output_x + kernel_width,
+            ]
+
+    columns_2d = columns.reshape(row_count, patch_elements)
+    weight_2d = weight.data.reshape(out_channels, patch_elements)
+    output_2d = columns_2d @ weight_2d.T
+    output_data = output_2d.reshape(
+        batch_size,
+        output_side,
+        output_side,
+        out_channels,
+    ).transpose(0, 3, 1, 2)
+    if bias is not None:
+        output_data += bias.data[None, :, None, None]
+
+    requires_grad = x.requires_grad or weight.requires_grad or (
+        bias is not None and bias.requires_grad
+    )
+    out = Tensor(output_data, requires_grad=requires_grad)
+
+    def _backward():
+        output_gradient_2d = out.grad.transpose(0, 2, 3, 1).reshape(
+            row_count,
+            out_channels,
+        )
+
+        if x.requires_grad:
+            column_gradient = output_gradient_2d @ weight_2d
+            column_gradient = column_gradient.reshape(columns.shape)
+            input_gradient = np.zeros_like(x.data)
+            for output_y in range(output_side):
+                for output_x in range(output_side):
+                    input_gradient[
+                        :,
+                        :,
+                        output_y : output_y + kernel_height,
+                        output_x : output_x + kernel_width,
+                    ] += column_gradient[:, output_y, output_x]
+            _accumulate_grad(x, input_gradient)
+            del input_gradient, column_gradient
+
+        if weight.requires_grad:
+            weight_gradient = output_gradient_2d.T @ columns_2d
+            _accumulate_grad(weight, weight_gradient.reshape(weight.data.shape))
+
+        if bias is not None and bias.requires_grad:
+            bias_gradient = out.grad.sum(axis=(0, 2, 3), dtype=np.float32)
+            _accumulate_grad(bias, bias_gradient)
+
+    out._backward = _backward
+    parents = (x, weight) if bias is None else (x, weight, bias)
+    out._prev = parents
+    return out
+
+
+def conv2d_strided(x, weight, bias=None):
+    """Apply convolution with a sliding-window view and ``tensordot``.
+
+    The patch tensor is an overlapping, read-only view of the input rather
+    than a materialized im2col copy. Backward accumulates input gradients one
+    kernel offset at a time so it also avoids a full patch-gradient buffer.
+    """
+    (
+        batch_size,
+        _,
+        height,
+        _,
+        out_channels,
+        kernel_height,
+        kernel_width,
+    ) = _validate_conv2d_inputs(x, weight, bias)
+
+    output_side = height - kernel_height + 1
+    patches = np.lib.stride_tricks.sliding_window_view(
+        x.data,
+        (kernel_height, kernel_width),
+        axis=(2, 3),
+        writeable=False,
+    )
+    # patches: (B, Cin, Hout, Wout, Kh, Kw). Contract Cin, Kh, Kw.
+    output_data = np.tensordot(
+        patches,
+        weight.data,
+        axes=((1, 4, 5), (1, 2, 3)),
+    ).transpose(0, 3, 1, 2)
+    if bias is not None:
+        output_data += bias.data[None, :, None, None]
+
+    requires_grad = x.requires_grad or weight.requires_grad or (
+        bias is not None and bias.requires_grad
+    )
+    out = Tensor(output_data, requires_grad=requires_grad)
+
+    def _backward():
+        if x.requires_grad:
+            input_gradient = np.zeros_like(x.data)
+            # Each contraction produces only (B, Hout, Wout, Cin), rather
+            # than all Kh * Kw patch gradients at once.
+            output_gradient = out.grad.transpose(0, 2, 3, 1)
+            for kernel_y in range(kernel_height):
+                for kernel_x in range(kernel_width):
+                    offset_gradient = np.tensordot(
+                        output_gradient,
+                        weight.data[:, :, kernel_y, kernel_x],
+                        axes=([3], [0]),
+                    )
+                    input_gradient[
+                        :,
+                        :,
+                        kernel_y : kernel_y + output_side,
+                        kernel_x : kernel_x + output_side,
+                    ] += offset_gradient.transpose(0, 3, 1, 2)
+            _accumulate_grad(x, input_gradient)
+
+        if weight.requires_grad:
+            weight_gradient = np.tensordot(
+                out.grad,
+                patches,
+                axes=((0, 2, 3), (0, 2, 3)),
+            )
+            _accumulate_grad(weight, weight_gradient)
+
         if bias is not None and bias.requires_grad:
             bias_gradient = out.grad.sum(axis=(0, 2, 3), dtype=np.float32)
             _accumulate_grad(bias, bias_gradient)

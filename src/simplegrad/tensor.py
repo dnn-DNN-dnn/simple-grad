@@ -1,3 +1,5 @@
+from numbers import Real
+
 import numpy as np
 import torch
 
@@ -141,7 +143,22 @@ class Tensor:
         return out
 
     def __mul__(self, other):
-        assert isinstance(other, Tensor), "Operand must be a Tensor"
+        if isinstance(other, Real) and not isinstance(other, (bool, np.bool_)):
+            scalar = np.float32(other)
+            out = Tensor(
+                self.data * scalar,
+                requires_grad=self.requires_grad,
+            )
+
+            def _backward():
+                _accumulate_grad(self, scalar * out.grad)
+
+            out._backward = _backward
+            out._prev = {self}
+            return out
+
+        if not isinstance(other, Tensor):
+            raise TypeError("multiplication operand must be a Tensor or real scalar")
         out = Tensor(self.data * other.data, requires_grad=self.requires_grad or other.requires_grad)
 
         def _backward():
@@ -207,7 +224,7 @@ class Tensor:
             tensor._backward()
 
     def __neg__(self): # -self
-            return self * -1
+        return self * -1
 
     def __radd__(self, other): # other + self
         return self + other

@@ -5,6 +5,7 @@ import torch
 from simplegrad.tensor import Tensor, _accumulate_grad, release_graph, sum_to_shape
 
 
+## These functions copy or cast the same source values; they do not perform numerically different algorithms.
 def test_from_torch():
     pt_tensor = torch.rand((2, 2))
     tensor = Tensor.from_torch(pt_tensor)
@@ -30,6 +31,7 @@ def test_transpose():
     assert d11 == d22 and d21 == d12, f"{d11=}, {d12=}, {d21=}, {d22=}"
 
 
+## These functions perform the same operations; they must not show different values.
 def test_backward_accepts_array_upstream():
     """An ndarray seed computes the requested vector-Jacobian product."""
     x = Tensor([[1.0, 2.0], [3.0, 4.0]], requires_grad=True)
@@ -76,6 +78,7 @@ def test_backward_rejects_tensor_without_gradients():
         x.backward()
 
 
+## These tests intentinally inject values to test the algorithm's exactness; assert_allclose should pass with default tolerances.
 def test_accumulate_grad_preserves_gradient_buffer():
     """Central accumulation updates values without replacing the buffer."""
     x = Tensor([1.0, 2.0], requires_grad=True)
@@ -105,7 +108,7 @@ def test_accumulate_grad_ignores_tensor_without_gradients():
 
     assert constant.grad is None
 
-
+## These tests intentinally inject values to test the algorithm's exactness; assert_allclose should pass with default tolerances.
 def test_sum_to_shape_reduces_leading_and_singleton_dimensions():
     """Broadcast dimensions are summed while original dimensions remain."""
     gradient = np.arange(24, dtype=np.float32).reshape(2, 3, 4)

@@ -34,6 +34,12 @@ def parse_args():
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--depth", type=int, default=2)
     parser.add_argument("--width", type=int, default=8)
+    parser.add_argument(
+        "--conv-implementation",
+        choices=("patch", "strided", "im2col"),
+        default="patch",
+        help="Conv2D backend used by every convolution layer (default: patch)",
+    )
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     return parser.parse_args()
 
@@ -66,7 +72,7 @@ def load_mnist(path, train_size, test_size, seed):
     return train_images, train_labels, test_images, test_labels
 
 
-def build_model(depth, width):
+def build_model(depth, width, conv_implementation="patch"):
     """Build repeated Conv/ReLU blocks followed by a ten-class Linear."""
     final_side = 28 - 2 * depth
     if depth <= 0 or width <= 0 or final_side <= 0:
@@ -75,7 +81,15 @@ def build_model(depth, width):
     layers = []
     in_channels = 1
     for _ in range(depth):
-        layers += [Conv2d(in_channels, width, 3), ReLU()]
+        layers += [
+            Conv2d(
+                in_channels,
+                width,
+                3,
+                implementation=conv_implementation,
+            ),
+            ReLU(),
+        ]
         in_channels = width
     layers += [Flatten(), Linear(width * final_side**2, 10)]
     return Sequential(*layers)
@@ -140,7 +154,7 @@ def main():
     )
 
     np.random.seed(args.seed)
-    model = build_model(args.depth, args.width)
+    model = build_model(args.depth, args.width, args.conv_implementation)
     optimizer = Adam(model.parameters(), lr=args.learning_rate)
     rng = np.random.default_rng(args.seed + 1)
 

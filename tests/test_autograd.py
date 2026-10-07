@@ -6,6 +6,9 @@ from simplegrad.tensor import Tensor
 from simplegrad.ops import relu, sigmoid, matmul
 
 
+## The composed graph includes matmul and sigmoid, so forward values and
+## intermediate gradients use PyTorch's float32 defaults: rtol=1.3e-6,
+## atol=1e-5.
 def test_autograd():
     a = Tensor(np.random.randn(3, 3), requires_grad=True)
     b = Tensor(np.random.randn(3, 3), requires_grad=True)
@@ -48,6 +51,8 @@ def test_autograd():
                                rtol=1.3e-6, atol=1e-5)
 
 
+## These tests inject exact float32 values and evaluate closed-form polynomial
+## gradients; NumPy's default tolerance should pass.
 def test_backward_accumulates_leaf_gradients_without_repropagating_old_gradients():
     """Repeated traversals add leaf grads but do not reuse stale intermediates."""
     x = Tensor([1.0, -2.0, 3.0], requires_grad=True)

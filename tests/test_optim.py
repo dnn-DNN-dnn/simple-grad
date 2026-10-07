@@ -24,8 +24,12 @@ def test_adam_defaults():
     assert optimizer.beta1 == 0.9
     assert optimizer.beta2 == 0.999
     assert optimizer.eps == 1e-8
+    assert optimizer.weight_decay == 0
 
 
+## Repeated Adam updates compound bias-correction, sqrt, epsilon, and division
+## rounding, so parameters use rtol=1e-4, atol=1e-6. The simpler moment
+## recurrences use the tighter rtol=1e-5, atol=1e-7.
 def test_adam_matches_pytorch_across_multiple_steps():
     """Parameters and both moments match PyTorch over stateful updates."""
     first_data = np.array([[1.0, -2.0, 3.0], [0.5, 1.5, -0.25]], dtype=np.float32)
@@ -112,6 +116,68 @@ def test_adam_matches_pytorch_across_multiple_steps():
             )
 
 
+## Coupled weight decay changes both Adam moments and parameters. Repeated
+## updates use the same tolerances as the other PyTorch Adam reference test.
+def test_adam_weight_decay_matches_pytorch_without_mutating_gradient():
+    """Nonzero coupled L2 decay matches PyTorch across multiple steps."""
+    initial = np.array([1.0, -2.0, 0.5], dtype=np.float32)
+    parameter = Tensor(initial, requires_grad=True)
+    torch_parameter = torch.tensor(initial, requires_grad=True)
+    optimizer = Adam(
+        [parameter],
+        lr=2e-3,
+        betas=(0.8, 0.95),
+        eps=1e-7,
+        weight_decay=0.1,
+    )
+    torch_optimizer = torch.optim.Adam(
+        [torch_parameter],
+        lr=2e-3,
+        betas=(0.8, 0.95),
+        eps=1e-7,
+        weight_decay=0.1,
+        foreach=False,
+        fused=False,
+    )
+    gradients = (
+        np.array([0.2, -0.1, 0.0], dtype=np.float32),
+        np.zeros(3, dtype=np.float32),
+        np.array([-0.3, 0.4, 0.1], dtype=np.float32),
+    )
+
+    for gradient in gradients:
+        parameter.grad[...] = gradient
+        torch_parameter.grad = torch.tensor(gradient)
+
+        optimizer.step()
+        torch_optimizer.step()
+
+        np.testing.assert_array_equal(parameter.grad, gradient)
+        np.testing.assert_allclose(
+            parameter.data,
+            torch_parameter.detach().numpy(),
+            rtol=1e-4,
+            atol=1e-6,
+        )
+        state = optimizer.state[parameter]
+        torch_state = _torch_state(torch_optimizer, torch_parameter)
+        assert state["step"] == torch_state["step"]
+        np.testing.assert_allclose(
+            state["exp_avg"],
+            torch_state["exp_avg"],
+            rtol=1e-5,
+            atol=1e-7,
+        )
+        np.testing.assert_allclose(
+            state["exp_avg_sq"],
+            torch_state["exp_avg_sq"],
+            rtol=1e-5,
+            atol=1e-7,
+        )
+
+
+## The updated parameters follow the same stateful Adam path and therefore use
+## rtol=1e-4, atol=1e-6; the skipped parameter is required to remain exact.
 def test_adam_skips_missing_gradient_with_per_parameter_step():
     """A skipped parameter creates no state and starts its own counter later."""
     first = Tensor([1.0, -1.0], requires_grad=True)
@@ -207,6 +273,9 @@ def test_adam_zero_grad_preserves_buffer_identity():
         ({"betas": (0.9, 1.0)}, ValueError, "beta2"),
         ({"betas": (0.9,)}, TypeError, "pair"),
         ({"eps": 0}, ValueError, "eps must be positive"),
+        ({"weight_decay": -0.1}, ValueError, "non-negative"),
+        ({"weight_decay": float("inf")}, ValueError, "must be finite"),
+        ({"weight_decay": True}, TypeError, "must be a real number"),
     ],
 )
 def test_adam_rejects_invalid_hyperparameters(kwargs, error, message):

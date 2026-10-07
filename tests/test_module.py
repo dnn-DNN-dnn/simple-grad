@@ -8,6 +8,8 @@ from simplegrad.module import Conv2d, Flatten, Linear, ReLU, Sequential
 from simplegrad.ops import cross_entropy
 
 
+## State loading copies the same float32 values without numerical computation;
+## NumPy's default tolerance should pass.
 def test_load_state_dict_from_torch():
     D_IN, D_OUT = 32, 64
     pt_module = nn.Linear(D_IN, D_OUT, bias=True)
@@ -18,6 +20,8 @@ def test_load_state_dict_from_torch():
     np.testing.assert_allclose(module.bias.data, pt_module.bias.detach().numpy())
 
 
+## Linear contains a matmul reduction, so use PyTorch's float32 test defaults:
+## rtol=1.3e-6 and atol=1e-5.
 def test_linear_module():
     B, D_IN, D_OUT = 8, 32, 64
     pt_module = nn.Linear(D_IN, D_OUT, bias=True)
@@ -34,6 +38,8 @@ def test_linear_module():
                                rtol=1.3e-6, atol=1e-5)
 
 
+## Both expected and actual weights come from the same seeded values and are
+## cast to float32; NumPy's default tolerance should pass.
 def test_linear_and_conv2d_use_small_normal_weights_and_zero_biases():
     """Module initialization retains the original 0.01-normal policy."""
     random_state = np.random.get_state()
@@ -65,6 +71,8 @@ def test_linear_and_conv2d_use_small_normal_weights_and_zero_biases():
     )
 
 
+## Linear forward and all backward paths inherit matmul and reduction rounding;
+## use PyTorch's float32 defaults, rtol=1.3e-6 and atol=1e-5.
 def test_linear_backward_and_bias_match_torch():
     """Linear propagates into input, weight, and broadcast bias."""
     pt_module = nn.Linear(4, 3)
@@ -124,10 +132,13 @@ def test_linear_load_state_dict_preserves_parameter_storage():
     np.testing.assert_array_equal(module.weight.data, state["weight"])
 
 
-def test_conv2d_module_matches_torch():
+## Conv2d uses different multiply-accumulate kernels in NumPy and PyTorch;
+## rtol=1e-4 and atol=1e-5 allow float32 accumulation-order differences.
+@pytest.mark.parametrize("implementation", ["patch", "strided", "im2col"])
+def test_conv2d_module_matches_torch(implementation):
     """Conv2d stores PyTorch-compatible parameters and delegates correctly."""
     pt_module = nn.Conv2d(2, 3, kernel_size=3, stride=1, padding=0, bias=True)
-    module = Conv2d(2, 3, kernel_size=3)
+    module = Conv2d(2, 3, kernel_size=3, implementation=implementation)
     module.load_state_dict(pt_module.state_dict())
     x_data = np.linspace(-1.0, 1.0, 2 * 2 * 5 * 5, dtype=np.float32).reshape(2, 2, 5, 5)
     pt_x = torch.tensor(x_data, requires_grad=True)
@@ -151,6 +162,8 @@ def test_conv2d_without_bias_and_unsupported_geometry():
     assert module.parameters() == [module.weight]
     with pytest.raises(ValueError, match="supports only"):
         Conv2d(1, 2, kernel_size=3, stride=2)
+    with pytest.raises(ValueError, match="implementation"):
+        Conv2d(1, 2, kernel_size=3, implementation="unknown")
 
 
 def test_sequential_convnet_shape_and_parameter_order():

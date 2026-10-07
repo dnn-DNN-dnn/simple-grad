@@ -19,11 +19,21 @@ class Adam:
     """Adam optimizer with PyTorch defaults and per-parameter state.
 
     Moment arrays are created lazily the first time a parameter has a gradient.
+    Weight decay follows ``torch.optim.Adam``'s coupled L2 formulation: it is
+    added to the gradient before the moment updates, rather than applied as an
+    independent AdamW-style parameter update.
     Updates operate directly on Tensor data, so optimizer steps never extend the
     autograd graph.
     """
 
-    def __init__(self, parameters, lr=1e-3, betas=(0.9, 0.999), eps=1e-8):
+    def __init__(
+        self,
+        parameters,
+        lr=1e-3,
+        betas=(0.9, 0.999),
+        eps=1e-8,
+        weight_decay=0,
+    ):
         try:
             supplied_parameters = list(parameters)
         except TypeError as exc:
@@ -61,6 +71,10 @@ class Adam:
         if self.eps <= 0:
             raise ValueError("eps must be positive")
 
+        self.weight_decay = _finite_real(weight_decay, "weight_decay")
+        if self.weight_decay < 0:
+            raise ValueError("weight_decay must be non-negative")
+
         # Tensor uses identity hashing, so state is naturally per parameter and
         # retaining the key prevents object-id reuse from aliasing old state.
         self.state = {}
@@ -89,6 +103,7 @@ class Adam:
         one_minus_beta2 = np.float32(1.0 - self.beta2)
         learning_rate = np.float32(self.lr)
         epsilon = np.float32(self.eps)
+        weight_decay = np.float32(self.weight_decay)
 
         for parameter in self.parameters:
             if parameter.grad is None:
@@ -103,6 +118,11 @@ class Adam:
                     "parameter gradient shape must match parameter data: "
                     f"expected {parameter.data.shape}, got {gradient.shape}"
                 )
+
+            if weight_decay != 0:
+                # Match torch.optim.Adam: L2 decay participates in both moment
+                # estimates, while the user-visible gradient remains unchanged.
+                gradient = gradient + weight_decay * parameter.data
 
             state = self.state.get(parameter)
             if state is None:
