@@ -1,0 +1,1018 @@
+{
+  "schema_version": 1,
+  "artifact_kind": "task2_prediction_measurement_reconciliation",
+  "original_prediction_artifact": "artifacts/task2-release-before-optimizer/predictions-original.json",
+  "original_prediction_base_commit": "fe73fb4e309d49f640c48b3f3fda5feefd147e4f",
+  "measurement_worktree_base_commit": "fe73fb4e309d49f640c48b3f3fda5feefd147e4f",
+  "measurement_policy": "one steady-state training step after Adam warm-up; deterministic logical NumPy payload bytes; graph released before Adam; iterative backward traversal",
+  "margin_percent": 10,
+  "configurations": [
+    {
+      "label": "depth-1",
+      "depth": 1,
+      "width": 8,
+      "batch_size": 16,
+      "original_prediction": {
+        "peak_bytes": 3775788,
+        "breakdown": {
+          "parameters": 216680,
+          "gradients": 216680,
+          "optimizer_state": 433360,
+          "activations_saved_for_backward": 1306756,
+          "transient_other": 1602312
+        }
+      },
+      "reconciled_prediction": {
+        "parameter_count": 54170,
+        "peak_bytes": 3775788,
+        "breakdown": {
+          "parameters": 216680,
+          "gradients": 216680,
+          "optimizer_state": 433360,
+          "activations_saved_for_backward": 1306756,
+          "transient_other": 1602312
+        },
+        "assumptions": [
+          "float32 parameter, gradient, optimizer-state, and activation arrays",
+          "eager gradient buffers for parameters and every differentiable Tensor output",
+          "gradients contains only parameter gradients; intermediate gradients are transient/other",
+          "two Adam moment buffers per trainable parameter",
+          "saved activations include all retained Tensor data and loss probabilities",
+          "steady-state step after Adam moment buffers have been initialized",
+          "the autograd graph is released before Adam after iterative backward traversal",
+          "the reported breakdown is the largest loss-forward, backward, or Adam phase",
+          "opaque NumPy, BLAS, and einsum internal workspace is excluded"
+        ]
+      },
+      "measurement": {
+        "current_bytes": 866720,
+        "current": {
+          "parameters": 216680,
+          "gradients": 216680,
+          "optimizer_state": 433360,
+          "activations_saved_for_backward": 0,
+          "transient_other": 0
+        },
+        "peak_bytes": 3775788,
+        "at_peak": {
+          "parameters": 216680,
+          "gradients": 216680,
+          "optimizer_state": 433360,
+          "activations_saved_for_backward": 1306756,
+          "transient_other": 1602312
+        },
+        "peak_source": "matmul.backward_left"
+      },
+      "original_error": {
+        "parameters": {
+          "predicted_bytes": 216680,
+          "measured_bytes": 216680,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "gradients": {
+          "predicted_bytes": 216680,
+          "measured_bytes": 216680,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "optimizer_state": {
+          "predicted_bytes": 433360,
+          "measured_bytes": 433360,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "activations_saved_for_backward": {
+          "predicted_bytes": 1306756,
+          "measured_bytes": 1306756,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "transient_other": {
+          "predicted_bytes": 1602312,
+          "measured_bytes": 1602312,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        }
+      },
+      "reconciled_error": {
+        "parameters": {
+          "predicted_bytes": 216680,
+          "measured_bytes": 216680,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "gradients": {
+          "predicted_bytes": 216680,
+          "measured_bytes": 216680,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "optimizer_state": {
+          "predicted_bytes": 433360,
+          "measured_bytes": 433360,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "activations_saved_for_backward": {
+          "predicted_bytes": 1306756,
+          "measured_bytes": 1306756,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "transient_other": {
+          "predicted_bytes": 1602312,
+          "measured_bytes": 1602312,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        }
+      },
+      "peak_error": {
+        "original": {
+          "predicted_bytes": 3775788,
+          "measured_bytes": 3775788,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "reconciled": {
+          "predicted_bytes": 3775788,
+          "measured_bytes": 3775788,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        }
+      }
+    },
+    {
+      "label": "baseline",
+      "depth": 2,
+      "width": 8,
+      "batch_size": 16,
+      "original_prediction": {
+        "peak_bytes": 4677292,
+        "breakdown": {
+          "parameters": 187016,
+          "gradients": 187016,
+          "optimizer_state": 374032,
+          "activations_saved_for_backward": 1813380,
+          "transient_other": 2115848
+        }
+      },
+      "reconciled_prediction": {
+        "parameter_count": 46754,
+        "peak_bytes": 4677292,
+        "breakdown": {
+          "parameters": 187016,
+          "gradients": 187016,
+          "optimizer_state": 374032,
+          "activations_saved_for_backward": 1813380,
+          "transient_other": 2115848
+        },
+        "assumptions": [
+          "float32 parameter, gradient, optimizer-state, and activation arrays",
+          "eager gradient buffers for parameters and every differentiable Tensor output",
+          "gradients contains only parameter gradients; intermediate gradients are transient/other",
+          "two Adam moment buffers per trainable parameter",
+          "saved activations include all retained Tensor data and loss probabilities",
+          "steady-state step after Adam moment buffers have been initialized",
+          "the autograd graph is released before Adam after iterative backward traversal",
+          "the reported breakdown is the largest loss-forward, backward, or Adam phase",
+          "opaque NumPy, BLAS, and einsum internal workspace is excluded"
+        ]
+      },
+      "measurement": {
+        "current_bytes": 748064,
+        "current": {
+          "parameters": 187016,
+          "gradients": 187016,
+          "optimizer_state": 374032,
+          "activations_saved_for_backward": 0,
+          "transient_other": 0
+        },
+        "peak_bytes": 4677292,
+        "at_peak": {
+          "parameters": 187016,
+          "gradients": 187016,
+          "optimizer_state": 374032,
+          "activations_saved_for_backward": 1813380,
+          "transient_other": 2115848
+        },
+        "peak_source": "conv2d.backward_einsum_workspace"
+      },
+      "original_error": {
+        "parameters": {
+          "predicted_bytes": 187016,
+          "measured_bytes": 187016,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "gradients": {
+          "predicted_bytes": 187016,
+          "measured_bytes": 187016,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "optimizer_state": {
+          "predicted_bytes": 374032,
+          "measured_bytes": 374032,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "activations_saved_for_backward": {
+          "predicted_bytes": 1813380,
+          "measured_bytes": 1813380,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "transient_other": {
+          "predicted_bytes": 2115848,
+          "measured_bytes": 2115848,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        }
+      },
+      "reconciled_error": {
+        "parameters": {
+          "predicted_bytes": 187016,
+          "measured_bytes": 187016,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "gradients": {
+          "predicted_bytes": 187016,
+          "measured_bytes": 187016,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "optimizer_state": {
+          "predicted_bytes": 374032,
+          "measured_bytes": 374032,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "activations_saved_for_backward": {
+          "predicted_bytes": 1813380,
+          "measured_bytes": 1813380,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "transient_other": {
+          "predicted_bytes": 2115848,
+          "measured_bytes": 2115848,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        }
+      },
+      "peak_error": {
+        "original": {
+          "predicted_bytes": 4677292,
+          "measured_bytes": 4677292,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "reconciled": {
+          "predicted_bytes": 4677292,
+          "measured_bytes": 4677292,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        }
+      }
+    },
+    {
+      "label": "depth-3",
+      "depth": 3,
+      "width": 8,
+      "batch_size": 16,
+      "original_prediction": {
+        "peak_bytes": 5407020,
+        "breakdown": {
+          "parameters": 159912,
+          "gradients": 159912,
+          "optimizer_state": 319824,
+          "activations_saved_for_backward": 2232452,
+          "transient_other": 2534920
+        }
+      },
+      "reconciled_prediction": {
+        "parameter_count": 39978,
+        "peak_bytes": 5407020,
+        "breakdown": {
+          "parameters": 159912,
+          "gradients": 159912,
+          "optimizer_state": 319824,
+          "activations_saved_for_backward": 2232452,
+          "transient_other": 2534920
+        },
+        "assumptions": [
+          "float32 parameter, gradient, optimizer-state, and activation arrays",
+          "eager gradient buffers for parameters and every differentiable Tensor output",
+          "gradients contains only parameter gradients; intermediate gradients are transient/other",
+          "two Adam moment buffers per trainable parameter",
+          "saved activations include all retained Tensor data and loss probabilities",
+          "steady-state step after Adam moment buffers have been initialized",
+          "the autograd graph is released before Adam after iterative backward traversal",
+          "the reported breakdown is the largest loss-forward, backward, or Adam phase",
+          "opaque NumPy, BLAS, and einsum internal workspace is excluded"
+        ]
+      },
+      "measurement": {
+        "current_bytes": 639648,
+        "current": {
+          "parameters": 159912,
+          "gradients": 159912,
+          "optimizer_state": 319824,
+          "activations_saved_for_backward": 0,
+          "transient_other": 0
+        },
+        "peak_bytes": 5407020,
+        "at_peak": {
+          "parameters": 159912,
+          "gradients": 159912,
+          "optimizer_state": 319824,
+          "activations_saved_for_backward": 2232452,
+          "transient_other": 2534920
+        },
+        "peak_source": "conv2d.backward_einsum_workspace"
+      },
+      "original_error": {
+        "parameters": {
+          "predicted_bytes": 159912,
+          "measured_bytes": 159912,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "gradients": {
+          "predicted_bytes": 159912,
+          "measured_bytes": 159912,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "optimizer_state": {
+          "predicted_bytes": 319824,
+          "measured_bytes": 319824,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "activations_saved_for_backward": {
+          "predicted_bytes": 2232452,
+          "measured_bytes": 2232452,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "transient_other": {
+          "predicted_bytes": 2534920,
+          "measured_bytes": 2534920,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        }
+      },
+      "reconciled_error": {
+        "parameters": {
+          "predicted_bytes": 159912,
+          "measured_bytes": 159912,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "gradients": {
+          "predicted_bytes": 159912,
+          "measured_bytes": 159912,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "optimizer_state": {
+          "predicted_bytes": 319824,
+          "measured_bytes": 319824,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "activations_saved_for_backward": {
+          "predicted_bytes": 2232452,
+          "measured_bytes": 2232452,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "transient_other": {
+          "predicted_bytes": 2534920,
+          "measured_bytes": 2534920,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        }
+      },
+      "peak_error": {
+        "original": {
+          "predicted_bytes": 5407020,
+          "measured_bytes": 5407020,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "reconciled": {
+          "predicted_bytes": 5407020,
+          "measured_bytes": 5407020,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        }
+      }
+    },
+    {
+      "label": "width-4",
+      "depth": 2,
+      "width": 4,
+      "batch_size": 16,
+      "original_prediction": {
+        "peak_bytes": 2362668,
+        "breakdown": {
+          "parameters": 92952,
+          "gradients": 92952,
+          "optimizer_state": 185904,
+          "activations_saved_for_backward": 932740,
+          "transient_other": 1058120
+        }
+      },
+      "reconciled_prediction": {
+        "parameter_count": 23238,
+        "peak_bytes": 2362668,
+        "breakdown": {
+          "parameters": 92952,
+          "gradients": 92952,
+          "optimizer_state": 185904,
+          "activations_saved_for_backward": 932740,
+          "transient_other": 1058120
+        },
+        "assumptions": [
+          "float32 parameter, gradient, optimizer-state, and activation arrays",
+          "eager gradient buffers for parameters and every differentiable Tensor output",
+          "gradients contains only parameter gradients; intermediate gradients are transient/other",
+          "two Adam moment buffers per trainable parameter",
+          "saved activations include all retained Tensor data and loss probabilities",
+          "steady-state step after Adam moment buffers have been initialized",
+          "the autograd graph is released before Adam after iterative backward traversal",
+          "the reported breakdown is the largest loss-forward, backward, or Adam phase",
+          "opaque NumPy, BLAS, and einsum internal workspace is excluded"
+        ]
+      },
+      "measurement": {
+        "current_bytes": 371808,
+        "current": {
+          "parameters": 92952,
+          "gradients": 92952,
+          "optimizer_state": 185904,
+          "activations_saved_for_backward": 0,
+          "transient_other": 0
+        },
+        "peak_bytes": 2362668,
+        "at_peak": {
+          "parameters": 92952,
+          "gradients": 92952,
+          "optimizer_state": 185904,
+          "activations_saved_for_backward": 932740,
+          "transient_other": 1058120
+        },
+        "peak_source": "conv2d.backward_einsum_workspace"
+      },
+      "original_error": {
+        "parameters": {
+          "predicted_bytes": 92952,
+          "measured_bytes": 92952,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "gradients": {
+          "predicted_bytes": 92952,
+          "measured_bytes": 92952,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "optimizer_state": {
+          "predicted_bytes": 185904,
+          "measured_bytes": 185904,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "activations_saved_for_backward": {
+          "predicted_bytes": 932740,
+          "measured_bytes": 932740,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "transient_other": {
+          "predicted_bytes": 1058120,
+          "measured_bytes": 1058120,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        }
+      },
+      "reconciled_error": {
+        "parameters": {
+          "predicted_bytes": 92952,
+          "measured_bytes": 92952,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "gradients": {
+          "predicted_bytes": 92952,
+          "measured_bytes": 92952,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "optimizer_state": {
+          "predicted_bytes": 185904,
+          "measured_bytes": 185904,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "activations_saved_for_backward": {
+          "predicted_bytes": 932740,
+          "measured_bytes": 932740,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "transient_other": {
+          "predicted_bytes": 1058120,
+          "measured_bytes": 1058120,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        }
+      },
+      "peak_error": {
+        "original": {
+          "predicted_bytes": 2362668,
+          "measured_bytes": 2362668,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "reconciled": {
+          "predicted_bytes": 2362668,
+          "measured_bytes": 2362668,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        }
+      }
+    },
+    {
+      "label": "width-16",
+      "depth": 2,
+      "width": 16,
+      "batch_size": 16,
+      "original_prediction": {
+        "peak_bytes": 9323820,
+        "breakdown": {
+          "parameters": 378600,
+          "gradients": 378600,
+          "optimizer_state": 757200,
+          "activations_saved_for_backward": 3574660,
+          "transient_other": 4234760
+        }
+      },
+      "reconciled_prediction": {
+        "parameter_count": 94650,
+        "peak_bytes": 9323820,
+        "breakdown": {
+          "parameters": 378600,
+          "gradients": 378600,
+          "optimizer_state": 757200,
+          "activations_saved_for_backward": 3574660,
+          "transient_other": 4234760
+        },
+        "assumptions": [
+          "float32 parameter, gradient, optimizer-state, and activation arrays",
+          "eager gradient buffers for parameters and every differentiable Tensor output",
+          "gradients contains only parameter gradients; intermediate gradients are transient/other",
+          "two Adam moment buffers per trainable parameter",
+          "saved activations include all retained Tensor data and loss probabilities",
+          "steady-state step after Adam moment buffers have been initialized",
+          "the autograd graph is released before Adam after iterative backward traversal",
+          "the reported breakdown is the largest loss-forward, backward, or Adam phase",
+          "opaque NumPy, BLAS, and einsum internal workspace is excluded"
+        ]
+      },
+      "measurement": {
+        "current_bytes": 1514400,
+        "current": {
+          "parameters": 378600,
+          "gradients": 378600,
+          "optimizer_state": 757200,
+          "activations_saved_for_backward": 0,
+          "transient_other": 0
+        },
+        "peak_bytes": 9323820,
+        "at_peak": {
+          "parameters": 378600,
+          "gradients": 378600,
+          "optimizer_state": 757200,
+          "activations_saved_for_backward": 3574660,
+          "transient_other": 4234760
+        },
+        "peak_source": "conv2d.backward_einsum_workspace"
+      },
+      "original_error": {
+        "parameters": {
+          "predicted_bytes": 378600,
+          "measured_bytes": 378600,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "gradients": {
+          "predicted_bytes": 378600,
+          "measured_bytes": 378600,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "optimizer_state": {
+          "predicted_bytes": 757200,
+          "measured_bytes": 757200,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "activations_saved_for_backward": {
+          "predicted_bytes": 3574660,
+          "measured_bytes": 3574660,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "transient_other": {
+          "predicted_bytes": 4234760,
+          "measured_bytes": 4234760,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        }
+      },
+      "reconciled_error": {
+        "parameters": {
+          "predicted_bytes": 378600,
+          "measured_bytes": 378600,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "gradients": {
+          "predicted_bytes": 378600,
+          "measured_bytes": 378600,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "optimizer_state": {
+          "predicted_bytes": 757200,
+          "measured_bytes": 757200,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "activations_saved_for_backward": {
+          "predicted_bytes": 3574660,
+          "measured_bytes": 3574660,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "transient_other": {
+          "predicted_bytes": 4234760,
+          "measured_bytes": 4234760,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        }
+      },
+      "peak_error": {
+        "original": {
+          "predicted_bytes": 9323820,
+          "measured_bytes": 9323820,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "reconciled": {
+          "predicted_bytes": 9323820,
+          "measured_bytes": 9323820,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        }
+      }
+    },
+    {
+      "label": "batch-8",
+      "depth": 2,
+      "width": 8,
+      "batch_size": 8,
+      "original_prediction": {
+        "peak_bytes": 2904812,
+        "breakdown": {
+          "parameters": 187016,
+          "gradients": 187016,
+          "optimizer_state": 374032,
+          "activations_saved_for_backward": 998852,
+          "transient_other": 1157896
+        }
+      },
+      "reconciled_prediction": {
+        "parameter_count": 46754,
+        "peak_bytes": 2904812,
+        "breakdown": {
+          "parameters": 187016,
+          "gradients": 187016,
+          "optimizer_state": 374032,
+          "activations_saved_for_backward": 998852,
+          "transient_other": 1157896
+        },
+        "assumptions": [
+          "float32 parameter, gradient, optimizer-state, and activation arrays",
+          "eager gradient buffers for parameters and every differentiable Tensor output",
+          "gradients contains only parameter gradients; intermediate gradients are transient/other",
+          "two Adam moment buffers per trainable parameter",
+          "saved activations include all retained Tensor data and loss probabilities",
+          "steady-state step after Adam moment buffers have been initialized",
+          "the autograd graph is released before Adam after iterative backward traversal",
+          "the reported breakdown is the largest loss-forward, backward, or Adam phase",
+          "opaque NumPy, BLAS, and einsum internal workspace is excluded"
+        ]
+      },
+      "measurement": {
+        "current_bytes": 748064,
+        "current": {
+          "parameters": 187016,
+          "gradients": 187016,
+          "optimizer_state": 374032,
+          "activations_saved_for_backward": 0,
+          "transient_other": 0
+        },
+        "peak_bytes": 2904812,
+        "at_peak": {
+          "parameters": 187016,
+          "gradients": 187016,
+          "optimizer_state": 374032,
+          "activations_saved_for_backward": 998852,
+          "transient_other": 1157896
+        },
+        "peak_source": "matmul.backward_right"
+      },
+      "original_error": {
+        "parameters": {
+          "predicted_bytes": 187016,
+          "measured_bytes": 187016,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "gradients": {
+          "predicted_bytes": 187016,
+          "measured_bytes": 187016,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "optimizer_state": {
+          "predicted_bytes": 374032,
+          "measured_bytes": 374032,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "activations_saved_for_backward": {
+          "predicted_bytes": 998852,
+          "measured_bytes": 998852,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "transient_other": {
+          "predicted_bytes": 1157896,
+          "measured_bytes": 1157896,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        }
+      },
+      "reconciled_error": {
+        "parameters": {
+          "predicted_bytes": 187016,
+          "measured_bytes": 187016,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "gradients": {
+          "predicted_bytes": 187016,
+          "measured_bytes": 187016,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "optimizer_state": {
+          "predicted_bytes": 374032,
+          "measured_bytes": 374032,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "activations_saved_for_backward": {
+          "predicted_bytes": 998852,
+          "measured_bytes": 998852,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "transient_other": {
+          "predicted_bytes": 1157896,
+          "measured_bytes": 1157896,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        }
+      },
+      "peak_error": {
+        "original": {
+          "predicted_bytes": 2904812,
+          "measured_bytes": 2904812,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "reconciled": {
+          "predicted_bytes": 2904812,
+          "measured_bytes": 2904812,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        }
+      }
+    },
+    {
+      "label": "batch-32",
+      "depth": 2,
+      "width": 8,
+      "batch_size": 32,
+      "original_prediction": {
+        "peak_bytes": 8235564,
+        "breakdown": {
+          "parameters": 187016,
+          "gradients": 187016,
+          "optimizer_state": 374032,
+          "activations_saved_for_backward": 3442436,
+          "transient_other": 4045064
+        }
+      },
+      "reconciled_prediction": {
+        "parameter_count": 46754,
+        "peak_bytes": 8235564,
+        "breakdown": {
+          "parameters": 187016,
+          "gradients": 187016,
+          "optimizer_state": 374032,
+          "activations_saved_for_backward": 3442436,
+          "transient_other": 4045064
+        },
+        "assumptions": [
+          "float32 parameter, gradient, optimizer-state, and activation arrays",
+          "eager gradient buffers for parameters and every differentiable Tensor output",
+          "gradients contains only parameter gradients; intermediate gradients are transient/other",
+          "two Adam moment buffers per trainable parameter",
+          "saved activations include all retained Tensor data and loss probabilities",
+          "steady-state step after Adam moment buffers have been initialized",
+          "the autograd graph is released before Adam after iterative backward traversal",
+          "the reported breakdown is the largest loss-forward, backward, or Adam phase",
+          "opaque NumPy, BLAS, and einsum internal workspace is excluded"
+        ]
+      },
+      "measurement": {
+        "current_bytes": 748064,
+        "current": {
+          "parameters": 187016,
+          "gradients": 187016,
+          "optimizer_state": 374032,
+          "activations_saved_for_backward": 0,
+          "transient_other": 0
+        },
+        "peak_bytes": 8235564,
+        "at_peak": {
+          "parameters": 187016,
+          "gradients": 187016,
+          "optimizer_state": 374032,
+          "activations_saved_for_backward": 3442436,
+          "transient_other": 4045064
+        },
+        "peak_source": "conv2d.backward_einsum_workspace"
+      },
+      "original_error": {
+        "parameters": {
+          "predicted_bytes": 187016,
+          "measured_bytes": 187016,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "gradients": {
+          "predicted_bytes": 187016,
+          "measured_bytes": 187016,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "optimizer_state": {
+          "predicted_bytes": 374032,
+          "measured_bytes": 374032,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "activations_saved_for_backward": {
+          "predicted_bytes": 3442436,
+          "measured_bytes": 3442436,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "transient_other": {
+          "predicted_bytes": 4045064,
+          "measured_bytes": 4045064,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        }
+      },
+      "reconciled_error": {
+        "parameters": {
+          "predicted_bytes": 187016,
+          "measured_bytes": 187016,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "gradients": {
+          "predicted_bytes": 187016,
+          "measured_bytes": 187016,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "optimizer_state": {
+          "predicted_bytes": 374032,
+          "measured_bytes": 374032,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "activations_saved_for_backward": {
+          "predicted_bytes": 3442436,
+          "measured_bytes": 3442436,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "transient_other": {
+          "predicted_bytes": 4045064,
+          "measured_bytes": 4045064,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        }
+      },
+      "peak_error": {
+        "original": {
+          "predicted_bytes": 8235564,
+          "measured_bytes": 8235564,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        },
+        "reconciled": {
+          "predicted_bytes": 8235564,
+          "measured_bytes": 8235564,
+          "difference_bytes": 0,
+          "absolute_error_percent": 0.0
+        }
+      }
+    }
+  ],
+  "cap_experiment": {
+    "cap_bytes": 6000000,
+    "cap_display": "6 MB (6,000,000 bytes)",
+    "depth": 2,
+    "width": 8,
+    "predicted_largest_batch_size": 21,
+    "largest_batch_prediction_bytes": 5789252,
+    "next_batch_prediction_bytes": 6011644,
+    "largest_batch_confirmation": {
+      "fits": true,
+      "measurement": {
+        "current_bytes": 748064,
+        "current": {
+          "parameters": 187016,
+          "gradients": 187016,
+          "optimizer_state": 374032,
+          "activations_saved_for_backward": 0,
+          "transient_other": 0
+        },
+        "peak_bytes": 5789252,
+        "at_peak": {
+          "parameters": 187016,
+          "gradients": 187016,
+          "optimizer_state": 374032,
+          "activations_saved_for_backward": 2322460,
+          "transient_other": 2718728
+        },
+        "peak_source": "conv2d.backward_einsum_workspace"
+      },
+      "oom": null
+    },
+    "next_batch_confirmation": {
+      "fits": false,
+      "measurement": {
+        "current_bytes": 748064,
+        "current": {
+          "parameters": 187016,
+          "gradients": 187016,
+          "optimizer_state": 374032,
+          "activations_saved_for_backward": 0,
+          "transient_other": 0
+        },
+        "peak_bytes": 5932604,
+        "at_peak": {
+          "parameters": 187016,
+          "gradients": 187016,
+          "optimizer_state": 374032,
+          "activations_saved_for_backward": 2424276,
+          "transient_other": 2760264
+        },
+        "peak_source": "matmul.backward_left"
+      },
+      "oom": {
+        "source": "conv2d.backward_input",
+        "category": "transient_other",
+        "current_bytes": 5527100,
+        "requested_bytes": 475904,
+        "would_be_bytes": 6003004,
+        "limit_bytes": 6000000
+      }
+    }
+  }
+}

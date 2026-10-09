@@ -100,6 +100,7 @@ class Tensor:
         data,
         requires_grad=False,
         _data_category="activations_saved_for_backward",
+        _grad_category="transient_other",
         _source="tensor",
     ):
         self._data = None
@@ -107,6 +108,7 @@ class Tensor:
         self._data_handle = None
         self._grad_handle = None
         self._data_category = _data_category
+        self._grad_category = _grad_category
         self._source = _source
         self._saved_handles = []
         self.requires_grad = requires_grad
@@ -116,7 +118,7 @@ class Tensor:
                 self._grad, self._grad_handle = allocate_zeros(
                     self.data.shape,
                     np.float32,
-                    "gradients",
+                    self._grad_category,
                     f"{self._source}.grad",
                 )
         except Exception:
@@ -160,7 +162,7 @@ class Tensor:
         array, handle = create_array(
             shape,
             np.float32,
-            "gradients",
+            self._grad_category,
             f"{self._source}.grad",
             lambda: np.asarray(value, dtype=np.float32),
         )
@@ -375,16 +377,23 @@ class Tensor:
         topo = []
         visited = set()
 
-        def build_topo(node):
-            if node not in visited:
-                visited.add(node)
-                for parent in node._prev:
-                    build_topo(parent)
-
-                topo.append(node)
-
         try:
-            build_topo(self)
+            # Iterative post-order traversal preserves the recursive ordering
+            # without a self-referential closure retaining the completed graph
+            # until cyclic garbage collection runs.
+            stack = [(self, False)]
+            while stack:
+                node, expanded = stack.pop()
+                if expanded:
+                    topo.append(node)
+                    continue
+                if node in visited:
+                    continue
+                visited.add(node)
+                stack.append((node, True))
+                for parent in reversed(node._prev):
+                    if parent not in visited:
+                        stack.append((parent, False))
 
             for tensor in topo:
                 if tensor._prev and tensor.requires_grad:

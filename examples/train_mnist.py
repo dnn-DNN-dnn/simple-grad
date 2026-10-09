@@ -2,7 +2,6 @@
 """Train a small MNIST classifier entirely with simple-grad."""
 
 import argparse
-import gc
 import json
 import os
 from pathlib import Path
@@ -109,12 +108,11 @@ def train_epoch(model, optimizer, images, labels, batch_size, rng):
         logits = model(inputs)
         loss = cross_entropy(logits, targets)
         loss.backward()
+        release_graph(loss)
         optimizer.step()
 
         loss_sum += float(loss.data) * len(indices)
         correct += int(np.sum(np.argmax(logits.data, axis=1) == targets))
-        release_graph(loss)
-        gc.collect()
 
     return loss_sum / len(images), correct / len(images)
 
@@ -128,7 +126,6 @@ def evaluate(model, images, labels, batch_size):
         logits = model(inputs)
         correct += int(np.sum(np.argmax(logits.data, axis=1) == targets))
         release_graph(logits)
-        gc.collect()
     return correct, correct / len(images)
 
 

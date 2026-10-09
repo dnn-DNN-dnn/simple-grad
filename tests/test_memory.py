@@ -151,7 +151,8 @@ def test_tensor_and_module_allocations_use_expected_categories():
     current = get_memory_stats().current
 
     assert current.parameters - baseline.parameters == (3 * 2 + 2) * 4
-    assert current.gradients - baseline.gradients == (3 + 3 * 2 + 2) * 4
+    assert current.gradients - baseline.gradients == (3 * 2 + 2) * 4
+    assert current.transient_other - baseline.transient_other == 3 * 4
     assert (
         current.activations_saved_for_backward
         - baseline.activations_saved_for_backward
@@ -163,14 +164,46 @@ def test_tensor_and_module_allocations_use_expected_categories():
     assert get_memory_stats().current == baseline
 
 
+def test_conv2d_reuses_one_tracked_einsum_workspace_per_phase():
+    """Workspace event count is constant rather than proportional to pixels."""
+    gc.collect()
+    layer = Conv2d(1, 2, 3)
+    inputs = Tensor(np.ones((2, 1, 5, 5), dtype=np.float32), requires_grad=True)
+    reset_peak_memory()
+
+    output = layer(inputs)
+    output.backward(np.ones_like(output.data))
+    events = get_memory_event_trace()
+
+    for source in (
+        "conv2d.forward_einsum_workspace",
+        "conv2d.backward_einsum_workspace",
+    ):
+        matching = [event.action for event in events if event.source == source]
+        assert matching == ["allocate", "release"]
+    assert not any(
+        event.source
+        in {
+            "conv2d.forward_einsum",
+            "conv2d.backward_input_einsum",
+            "conv2d.backward_weight_einsum",
+        }
+        for event in events
+    )
+
+    release_graph(output)
+    del output, inputs, layer
+    gc.collect()
+
+
 def _training_step(model, optimizer):
     inputs = Tensor(np.arange(12, dtype=np.float32).reshape(4, 3))
     logits = model(inputs)
     loss = cross_entropy(logits, np.array([0, 1, 0, 1], dtype=np.int64))
     optimizer.zero_grad()
     loss.backward()
-    optimizer.step()
     release_graph(loss)
+    optimizer.step()
 
 
 def test_complete_training_step_cleans_graph_memory_and_has_repeatable_peak():
@@ -180,20 +213,17 @@ def test_complete_training_step_cleans_graph_memory_and_has_repeatable_peak():
 
     # Warm up once so both compared intervals start with initialized Adam state.
     _training_step(model, optimizer)
-    gc.collect()
     persistent = get_memory_stats().current
     assert persistent.activations_saved_for_backward == 0
     assert persistent.transient_other == 0
 
     reset_peak_memory()
     _training_step(model, optimizer)
-    gc.collect()
     first = get_memory_stats()
     assert first.current == persistent
 
     reset_peak_memory()
     _training_step(model, optimizer)
-    gc.collect()
     second = get_memory_stats()
 
     assert second.current == persistent
@@ -202,6 +232,26 @@ def test_complete_training_step_cleans_graph_memory_and_has_repeatable_peak():
     assert second.peak_source == first.peak_source
     assert sum(second.at_peak.to_dict().values()) == second.peak_bytes
     assert get_memory_event_trace()
+
+
+def test_iterative_backward_releases_graph_without_cyclic_collection():
+    """Graph cleanup returns to baseline even while cyclic GC is disabled."""
+    gc.collect()
+    model = Linear(3, 2)
+    optimizer = Adam(model.parameters())
+    was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        _training_step(model, optimizer)
+        current = get_memory_stats().current
+        assert current.activations_saved_for_backward == 0
+        assert current.transient_other == 0
+    finally:
+        if was_enabled:
+            gc.enable()
+
+    del optimizer, model
+    gc.collect()
 
 
 def test_peak_is_identical_across_hash_seeds():
@@ -217,6 +267,8 @@ reset_peak_memory()
 inputs = Tensor(np.ones((4, 3), dtype=np.float32))
 loss = cross_entropy(model(inputs), np.array([0, 1, 0, 1]))
 loss.backward()
+from simplegrad import release_graph
+release_graph(loss)
 optimizer.step()
 stats = get_memory_stats()
 print(json.dumps({
@@ -269,6 +321,7 @@ def _safe_training_step(model, optimizer):
         )
         optimizer.zero_grad()
         loss.backward()
+        release_graph(loss)
         optimizer.step()
     finally:
         if loss is not None:
@@ -333,6 +386,7 @@ def test_task1_convnet_configuration_raises_inside_allocation_path():
             )
             optimizer.zero_grad()
             loss.backward()
+            release_graph(loss)
             optimizer.step()
 
         assert raised.value.source == "conv2d.forward_output_workspace"

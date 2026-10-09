@@ -86,7 +86,7 @@ def test_human_readable_formatters_preserve_exact_values():
 
     estimate = estimate_peak_memory(build_tiny_model(), 4, (1, 5, 5))
     assert format_memory_estimate(estimate) == (
-        "num params: 0.0001M (77), memory: 5.2 KB (5,184 bytes)"
+        "num params: 0.0001M (77), memory: 4.4 KB (4,396 bytes)"
     )
 
     with pytest.raises(ValueError, match="non-negative"):
@@ -108,13 +108,13 @@ def test_tiny_model_matches_hand_calculation():
     # Saved data: input=100, Conv=72, ReLU=72, Flatten=72,
     # transpose=54, matmul=12, add=12, probabilities=12, loss=1.
     assert estimate.activations_saved_for_backward == 407 * 4
-    # Gradients: 77 parameter elements plus one eager buffer for each
-    # differentiable operation output (72+72+72+54+12+12+1).
-    assert estimate.gradients == 372 * 4
-    # Adam dominates: five arrays for the largest parameter plus retained
-    # int64 target and index vectors.
-    assert estimate.transient_other == 5 * 54 * 4 + 4 * 2 * 8
-    assert estimate.peak_bytes == 5184
+    # The gradients category contains only float32 parameter gradients.
+    assert estimate.gradients == 77 * 4
+    # Backward dominates. Transient/other contains eager intermediate gradients
+    # (72+72+72+54+12+12+1), retained target/index vectors, scalar upstream,
+    # and the largest module workspace.
+    assert estimate.transient_other == 295 * 4 + 4 * 2 * 8 + 4 + 4 * 72
+    assert estimate.peak_bytes == 4396
 
 
 def test_estimator_does_not_execute_supported_modules(monkeypatch):
@@ -144,7 +144,7 @@ def test_batch_size_changes_activations_and_may_change_transient_workspace():
 
     assert small.parameter_count == large.parameter_count
     assert small.parameters == large.parameters
-    assert large.gradients > small.gradients
+    assert large.gradients == small.gradients == small.parameter_count * 4
     assert small.optimizer_state == large.optimizer_state
     assert large.activations_saved_for_backward > (
         small.activations_saved_for_backward
@@ -152,8 +152,6 @@ def test_batch_size_changes_activations_and_may_change_transient_workspace():
     assert large.peak_bytes - small.peak_bytes == (
         large.activations_saved_for_backward
         - small.activations_saved_for_backward
-        + large.gradients
-        - small.gradients
         + large.transient_other
         - small.transient_other
     )
@@ -208,8 +206,10 @@ def test_shared_parameters_count_once_and_activations_count_per_call():
 
     assert shared_estimate.parameter_count == 12
     assert shared_estimate.parameters == single_estimate.parameters == 48
-    assert shared_estimate.activations_saved_for_backward == 115 * 4
-    assert single_estimate.activations_saved_for_backward == 70 * 4
+    # These models peak during loss forward, before the scalar loss Tensor is
+    # constructed, so its one-element data buffer is not part of the snapshot.
+    assert shared_estimate.activations_saved_for_backward == 114 * 4
+    assert single_estimate.activations_saved_for_backward == 69 * 4
 
 
 def test_biasless_conv_reduces_parameter_count():
@@ -283,18 +283,17 @@ def test_reconciled_estimate_matches_measured_steady_state_step():
     def step():
         inputs = Tensor(np.zeros((4, 1, 5, 5), dtype=np.float32))
         targets = np.array([0, 1, 2, 0], dtype=np.int64)
-        loss = cross_entropy(model(inputs), targets)
+        logits = model(inputs)
+        loss = cross_entropy(logits, targets)
         optimizer.zero_grad()
         loss.backward()
-        optimizer.step()
         release_graph(loss)
+        optimizer.step()
 
     # Warm up lazy Adam moments, then measure an equivalent steady-state step.
     step()
-    gc.collect()
     reset_peak_memory()
     step()
-    gc.collect()
 
     estimate = estimate_peak_memory(model, 4, (1, 5, 5))
     measured = get_memory_stats()

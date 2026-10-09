@@ -218,29 +218,37 @@ def conv2d(x, weight, bias=None):
         "conv2d.forward_output_workspace",
     )
 
-    # Each patch is a view into the input. This avoids materializing a full
-    # im2col array whose size scales with every output position.
     try:
-        for output_y in range(output_side):
-            for output_x in range(output_side):
-                patch = x.data[
-                    :,
-                    :,
-                    output_y : output_y + kernel_height,
-                    output_x : output_x + kernel_width,
-                ]
-                with temporary_result(
-                    (batch_size, out_channels),
-                    np.float32,
-                    "conv2d.forward_einsum",
-                    lambda: np.einsum(
+        # Allocate and account for one small contraction result, then reuse it
+        # at every output position. This has the same peak liveness as one
+        # temporary per pixel without thousands of tracker events.
+        patch_result, patch_result_handle = allocate_empty(
+            (batch_size, out_channels),
+            np.float32,
+            "transient_other",
+            "conv2d.forward_einsum_workspace",
+        )
+        try:
+            # Each patch is a view into the input. This avoids materializing a
+            # full im2col array whose size scales with every output position.
+            for output_y in range(output_side):
+                for output_x in range(output_side):
+                    patch = x.data[
+                        :,
+                        :,
+                        output_y : output_y + kernel_height,
+                        output_x : output_x + kernel_width,
+                    ]
+                    np.einsum(
                         "bcij,ocij->bo",
                         patch,
                         weight.data,
+                        out=patch_result,
                         optimize=False,
-                    ),
-                ) as patch_result:
+                    )
                     output_data[:, :, output_y, output_x] = patch_result
+        finally:
+            patch_result_handle.release()
 
         if bias is not None:
             output_data += bias.data[None, :, None, None]
@@ -277,6 +285,60 @@ def conv2d(x, weight, bias=None):
                     "conv2d.backward_weight",
                 )
                 workspace_handles.append(weight_handle)
+
+            # A single flat scratch allocation is large enough for any one
+            # contraction. Input, weight, and bias views reuse this storage;
+            # their contractions execute sequentially and never coexist.
+            input_contribution_elements = (
+                batch_size * in_channels * kernel_height * kernel_width
+                if input_gradient is not None
+                else 0
+            )
+            weight_contribution_elements = (
+                weight.data.size if weight_gradient is not None else 0
+            )
+            bias_contribution_elements = (
+                out_channels
+                if bias is not None and bias.requires_grad
+                else 0
+            )
+            scratch_elements = max(
+                input_contribution_elements,
+                weight_contribution_elements,
+                bias_contribution_elements,
+            )
+            if scratch_elements:
+                scratch, scratch_handle = allocate_empty(
+                    (scratch_elements,),
+                    np.float32,
+                    "transient_other",
+                    "conv2d.backward_einsum_workspace",
+                )
+                workspace_handles.append(scratch_handle)
+            else:
+                scratch = None
+
+            input_contribution = (
+                scratch[:input_contribution_elements].reshape(
+                    batch_size,
+                    in_channels,
+                    kernel_height,
+                    kernel_width,
+                )
+                if input_contribution_elements
+                else None
+            )
+            weight_contribution = (
+                scratch[:weight_contribution_elements].reshape(weight.data.shape)
+                if weight_contribution_elements
+                else None
+            )
+            bias_contribution = (
+                scratch[:bias_contribution_elements]
+                if bias_contribution_elements
+                else None
+            )
+
             for output_y in range(output_side):
                 for output_x in range(output_side):
                     output_gradient = out.grad[:, :, output_y, output_x]
@@ -288,55 +350,41 @@ def conv2d(x, weight, bias=None):
                     ]
 
                     if input_gradient is not None:
-                        with temporary_result(
-                            (
-                                batch_size,
-                                in_channels,
-                                kernel_height,
-                                kernel_width,
-                            ),
-                            np.float32,
-                            "conv2d.backward_input_einsum",
-                            lambda: np.einsum(
-                                "bo,ocij->bcij",
-                                output_gradient,
-                                weight.data,
-                                optimize=False,
-                            ),
-                        ) as contribution:
-                            input_gradient[
-                                :,
-                                :,
-                                output_y : output_y + kernel_height,
-                                output_x : output_x + kernel_width,
-                            ] += contribution
+                        np.einsum(
+                            "bo,ocij->bcij",
+                            output_gradient,
+                            weight.data,
+                            out=input_contribution,
+                            optimize=False,
+                        )
+                        input_gradient[
+                            :,
+                            :,
+                            output_y : output_y + kernel_height,
+                            output_x : output_x + kernel_width,
+                        ] += input_contribution
 
                     if weight_gradient is not None:
-                        with temporary_result(
-                            weight.data.shape,
-                            np.float32,
-                            "conv2d.backward_weight_einsum",
-                            lambda: np.einsum(
-                                "bo,bcij->ocij",
-                                output_gradient,
-                                patch,
-                                optimize=False,
-                            ),
-                        ) as contribution:
-                            weight_gradient += contribution
+                        np.einsum(
+                            "bo,bcij->ocij",
+                            output_gradient,
+                            patch,
+                            out=weight_contribution,
+                            optimize=False,
+                        )
+                        weight_gradient += weight_contribution
 
             if input_gradient is not None:
                 _accumulate_grad(x, input_gradient)
             if weight_gradient is not None:
                 _accumulate_grad(weight, weight_gradient)
             if bias is not None and bias.requires_grad:
-                with temporary_result(
-                    (out_channels,),
-                    np.float32,
-                    "conv2d.backward_bias",
-                    lambda: out.grad.sum(axis=(0, 2, 3), dtype=np.float32),
-                ) as bias_gradient:
-                    _accumulate_grad(bias, bias_gradient)
+                out.grad.sum(
+                    axis=(0, 2, 3),
+                    dtype=np.float32,
+                    out=bias_contribution,
+                )
+                _accumulate_grad(bias, bias_contribution)
         finally:
             for handle in reversed(workspace_handles):
                 handle.release()

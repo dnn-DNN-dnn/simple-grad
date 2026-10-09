@@ -97,10 +97,11 @@ def generate_predictions(repo_root):
         "input_shape": [1, 28, 28],
         "policy": {
             "dtype": "float32",
-            "gradients": "one buffer per trainable parameter",
+            "gradients": "4P parameter-gradient bytes; eager intermediate gradients are transient/other",
             "loss": "cross_entropy",
             "optimizer": "two Adam moments per trainable parameter",
-            "peak": "persistent state + saved activations + largest modeled transient workspace",
+            "graph_lifecycle": "iterative backward traversal; release graph after backward, before Adam",
+            "peak": "largest category snapshot among loss-forward, backward, and post-release Adam phases",
         },
         "assumptions": assumptions,
         "configurations": configurations,

@@ -47,8 +47,10 @@ def _run_step(model, optimizer, batch_size):
     loss = None
     try:
         optimizer.zero_grad()
-        loss = cross_entropy(model(inputs), targets)
+        logits = model(inputs)
+        loss = cross_entropy(logits, targets)
         loss.backward()
+        release_graph(loss)
         optimizer.step()
     finally:
         if loss is not None:
@@ -56,8 +58,8 @@ def _run_step(model, optimizer, batch_size):
 
 
 def _collect_cycles():
-    # Tensor.backward currently leaves a collectable closure cycle. Collection
-    # makes every configuration begin from the same logical baseline.
+    # Collection makes every configuration begin from the same baseline and
+    # verifies that explicit graph release left no tracked graph storage live.
     gc.collect()
 
 
@@ -233,7 +235,8 @@ def generate_reconciliation(repo_root, original_path, cap_bytes):
         "measurement_worktree_base_commit": _current_commit(repo_root),
         "measurement_policy": (
             "one steady-state training step after Adam warm-up; deterministic "
-            "logical NumPy payload bytes; graph released and GC collected"
+            "logical NumPy payload bytes; graph released before Adam; "
+            "iterative backward traversal"
         ),
         "margin_percent": 10,
         "configurations": configurations,

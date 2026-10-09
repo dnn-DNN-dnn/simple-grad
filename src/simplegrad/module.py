@@ -48,12 +48,14 @@ class Linear(Module):
             np.random.randn(self.out_features, self.in_features) * 0.01,
             requires_grad=True,
             _data_category="parameters",
+            _grad_category="gradients",
             _source="linear.weight",
         )
         self.bias = Tensor(
             np.zeros(self.out_features),
             requires_grad=True,
             _data_category="parameters",
+            _grad_category="gradients",
             _source="linear.bias",
         )
 
@@ -132,6 +134,7 @@ class Conv2d(Module):
             * 0.01,
             requires_grad=True,
             _data_category="parameters",
+            _grad_category="gradients",
             _source="conv2d.weight",
         )
         self.bias = (
@@ -139,6 +142,7 @@ class Conv2d(Module):
                 np.zeros(self.out_channels),
                 requires_grad=True,
                 _data_category="parameters",
+                _grad_category="gradients",
                 _source="conv2d.bias",
             )
             if bias

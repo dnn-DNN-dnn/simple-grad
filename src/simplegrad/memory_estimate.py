@@ -24,10 +24,12 @@ _BYTE_UNITS = ("B", "KB", "MB", "GB", "TB", "PB", "EB")
 _ASSUMPTIONS = (
     "float32 parameter, gradient, optimizer-state, and activation arrays",
     "eager gradient buffers for parameters and every differentiable Tensor output",
+    "gradients contains only parameter gradients; intermediate gradients are transient/other",
     "two Adam moment buffers per trainable parameter",
     "saved activations include all retained Tensor data and loss probabilities",
     "steady-state step after Adam moment buffers have been initialized",
-    "transient/other is the largest loss-forward, backward, or Adam workspace",
+    "the autograd graph is released before Adam after iterative backward traversal",
+    "the reported breakdown is the largest loss-forward, backward, or Adam phase",
     "opaque NumPy, BLAS, and einsum internal workspace is excluded",
 )
 
@@ -406,20 +408,13 @@ def estimate_peak_memory(model, batch_size, input_shape):
             f"shape propagation produced {output_shape}"
         )
 
-    # The input and every owned operation result remain reachable until graph
-    # release. Cross-entropy adds saved probabilities and its scalar Tensor.
-    saved_activation_count = (
-        _numel(full_input_shape)
-        + module_data_count
-        + _numel(output_shape)
-        + 1
-    )
-    intermediate_gradient_count = module_gradient_count + 1
+    input_count = _numel(full_input_shape)
+    logits_count = _numel(output_shape)
     batch_size, _ = output_shape
     retained_target_and_index_bytes = (
         batch_size * 2 * np.dtype(np.int64).itemsize
     )
-    logits_bytes = _numel(output_shape) * _FLOAT32_BYTES
+    logits_bytes = logits_count * _FLOAT32_BYTES
     # At the loss-forward peak, targets, row maxima, shifted logits,
     # exponentials, normalizers, log-normalizers, indices, per-example losses,
     # and the temporary scalar coexist. Probabilities are saved activations.
@@ -436,26 +431,52 @@ def estimate_peak_memory(model, batch_size, input_shape):
         + _FLOAT32_BYTES
         + max(module_workspace_bytes, logits_bytes, _FLOAT32_BYTES)
     )
-    # Adam's corrected moments, denominator, numerator, and update can overlap.
-    adam_transient_bytes = (
-        retained_target_and_index_bytes
-        + 5 * largest_parameter_count * _FLOAT32_BYTES
-    )
-    transient_other_bytes = max(
-        loss_forward_transient_bytes,
-        backward_transient_bytes,
-        adam_transient_bytes,
-    )
-    breakdown = MemoryBreakdown(
-        parameters=parameter_bytes,
-        gradients=(
-            parameter_bytes + intermediate_gradient_count * _FLOAT32_BYTES
-        ),
-        optimizer_state=2 * parameter_bytes,
+    persistent = {
+        "parameters": parameter_bytes,
+        "optimizer_state": 2 * parameter_bytes,
+    }
+    # The loss-forward peak precedes construction of the scalar loss Tensor.
+    loss_forward_breakdown = MemoryBreakdown(
+        **persistent,
+        gradients=parameter_bytes,
         activations_saved_for_backward=(
-            saved_activation_count * _FLOAT32_BYTES
+            input_count + module_data_count + logits_count
+        )
+        * _FLOAT32_BYTES,
+        transient_other=(
+            module_gradient_count * _FLOAT32_BYTES
+            + loss_forward_transient_bytes
         ),
-        transient_other=transient_other_bytes,
+    )
+    # Backward retains the complete graph, loss Tensor, saved loss arrays, and
+    # every eager intermediate gradient buffer.
+    backward_breakdown = MemoryBreakdown(
+        **persistent,
+        gradients=parameter_bytes,
+        activations_saved_for_backward=(
+            input_count + module_data_count + logits_count + 1
+        )
+        * _FLOAT32_BYTES,
+        transient_other=(
+            (module_gradient_count + 1) * _FLOAT32_BYTES
+            + backward_transient_bytes
+        ),
+    )
+    # release_graph removes internal graph nodes and loss-saved arrays before
+    # Adam. The training loop still directly holds input, logits, and loss.
+    adam_breakdown = MemoryBreakdown(
+        **persistent,
+        gradients=parameter_bytes,
+        activations_saved_for_backward=(input_count + logits_count + 1)
+        * _FLOAT32_BYTES,
+        transient_other=(
+            (logits_count + 1) * _FLOAT32_BYTES
+            + 5 * largest_parameter_count * _FLOAT32_BYTES
+        ),
+    )
+    breakdown = max(
+        (loss_forward_breakdown, backward_breakdown, adam_breakdown),
+        key=lambda candidate: candidate.total_bytes,
     )
     return MemoryEstimate(
         parameter_count=parameter_count,
